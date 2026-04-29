@@ -22,6 +22,7 @@ const defaultState = () => ({
     history: {},      // { 'YYYY-MM-DD': balance }
   },
   streak: { count: 0, lastActive: null },
+  handbook: { lastIndex: null, check: {} },
   lastSaved: null,
 });
 
@@ -36,6 +37,7 @@ function loadState() {
       // Defensive merge for nested objects
       S.equity = { ...defaultState().equity, ...(loaded.equity || {}) };
       S.streak = { ...defaultState().streak, ...(loaded.streak || {}) };
+      S.handbook = { ...defaultState().handbook, ...(loaded.handbook || {}) };
     }
   } catch (e) { /* storage unavailable — fall back to in-memory */ }
 }
@@ -1222,6 +1224,172 @@ function initTheme() {
   });
 }
 
+// ---------------- Trader's Handbook ----------------
+// Curated principles distilled from JLaw Trader's Handbook (10 chapters).
+// Each entry: { zh: original Chinese, en: English summary, cat: category tag }.
+const HANDBOOK = [
+  // --- 1. Market Cycles ---
+  { cat: 'Market Cycles', zh: '交易系統的效能，取決於「交易引擎」與當前市場階段的對齊。',
+    en: 'Edge depends on alignment between your trading engine and the current market regime.' },
+  { cat: 'Market Cycles', zh: '200MA 斜率向上 · 股價在線之上 · 進入高勝率模式，專注做多強勢股。',
+    en: '200MA sloping up with price above it = high-win regime. Focus only on the strongest names.' },
+  { cat: 'Market Cycles', zh: '橫盤拉鋸期最易出現假突破 —— 減少頻率，收緊停損。',
+    en: 'Sideways markets manufacture false breakouts. Trade less, tighten stops.' },
+  { cat: 'Market Cycles', zh: '宏觀變量可以重啟通脹預期 —— 該縮曝險時就該縮。',
+    en: 'When macro shifts the rate path, lower exposure. Survival first, conviction second.' },
+
+  // --- 2. Stock Selection ---
+  { cat: 'Selection', zh: '只買跑贏大盤的 H 股 —— 大盤回調時橫盤，企穩時率先突破。',
+    en: 'Buy only High Relative Strength. They consolidate while the market drops, then lead the breakout.' },
+  { cat: 'Selection', zh: '大型股：市值 > $10B · 日均成交 > $50M · 股價 > $15。',
+    en: 'Liquidity floor: $10B cap, $50M ADV, $15 price. Below that = junk volatility.' },
+  { cat: 'Selection', zh: '嚴禁交易 ETF、ETN、ADR 與低價股 —— 過濾雜訊是勝率的前提。',
+    en: 'Filter out ETFs, ETNs, ADRs and sub-$15 names. Clean inputs make a clean edge.' },
+  { cat: 'Selection', zh: 'IPO 上市 4–6 個月後的底部結構最穩固，超過 9 個月變老。',
+    en: 'Best IPO bases form 4–6 months after listing. After 9 months the setup is stale.' },
+
+  // --- 3. Setups ---
+  { cat: 'Setups', zh: 'VCP：波幅縮減超過 50%，成交枯竭 —— 浮籌已洗淨，是動能發動前的壓縮彈簧。',
+    en: 'VCP: range contracts >50% with dry volume. The float is washed; the spring is loaded.' },
+  { cat: 'Setups', zh: '平行通道 2+1 繪圖法 —— 二點定主線，一點平行對照。',
+    en: 'Parallel channel: two pivots define the trendline, one pivot draws the parallel. Anchor on close, not wicks.' },
+  { cat: 'Setups', zh: 'Bible Gap：跳空漲幅 > 15% · 市值 > $10B —— 代表基本面有實質新敘事。',
+    en: 'Bible Gap: >15% gap on a $10B+ name. A real fundamental story, not a low-volume squeeze.' },
+  { cat: 'Setups', zh: 'Overshoot 超越通道 —— 往往是動能衰竭的反轉信號。',
+    en: 'Overshoot beyond the channel often signals exhaustion, not strength.' },
+
+  // --- 4. Entry ---
+  { cat: 'Entry', zh: 'M.E.T.A. 進場：多個技術信號在同一時空重疊的區域。',
+    en: 'M.E.T.A. = Multiple Edge Trading Area. Multiple signals stacking at the same price and time.' },
+  { cat: 'Entry', zh: '開盤區間策略：5/15m 首根 K 線守住盤前低 · 回踩不破開盤 —— 即高品質進場點。',
+    en: 'Opening range: hold the pre-market low on the 5/15m bar, retest without breaking the open.' },
+  { cat: 'Entry', zh: '錯過 M.E.T.A. 進場點絕不追高 —— 等回踩 28MA。',
+    en: 'Miss the M.E.T.A. trigger? Don’t chase. Wait for the 28MA pullback.' },
+  { cat: 'Entry', zh: '所有進場必須有量價配合的證據。',
+    en: 'Every entry needs price-volume confirmation. No volume, no edge.' },
+
+  // --- 5. Risk ---
+  { cat: 'Risk', zh: '單筆虧損嚴格限制在 8%–10% 以內 —— 這是交易引擎的煞車系統。',
+    en: 'Cap any single trade loss at 8–10%. Risk control is the brake system of the engine.' },
+  { cat: 'Risk', zh: '邏輯停損：跌破關鍵支撐（28MA 或 VCP 底部）即刻離場。看好的理由消失，不應有任何幻想。',
+    en: 'Logical stop: thesis breaks, you exit. No hopes, no narratives, no second chances.' },
+  { cat: 'Risk', zh: '損失調整練習：勝率下降時，強制將頭寸縮減至 1/2 或 1/3。',
+    en: 'Loss-adjusted exercise: when the win rate drops, halve or third your size until the form returns.' },
+  { cat: 'Risk', zh: '財務停損規則不因宏觀敘事變動。',
+    en: 'Don’t move your stop because the macro story changed. Discipline is the only thesis.' },
+
+  // --- 6. Selling ---
+  { cat: 'Selling', zh: '買入是藝術，賣出是科學。利用分批套現鎖定勝果。',
+    en: 'Buying is art. Selling is science. Scale out to lock in the win.' },
+  { cat: 'Selling', zh: '放風箏：達目標盈虧比時賣出 50–75%，剩餘仓位以 28/50MA 作移動停損。',
+    en: 'Kite flying: take 50–75% at the first R-target, trail the rest along the 28 or 50MA.' },
+  { cat: 'Selling', zh: '股價收盤跌破 28MA · 拋物線頂部出現消耗性缺口 —— 防禦性賣出。',
+    en: 'Defensive sell: close below 28MA, or a parabolic exhaustion gap. Don’t debate — exit.' },
+
+  // --- 7. Position ---
+  { cat: 'Position', zh: '單一個股仓位不超過組合的 15%。資金該流向相對強度最高的板塊。',
+    en: 'Cap any name at 15% of the book. Capital flows to the strongest sectors.' },
+  { cat: 'Position', zh: '總體未平倉風險：所有持仓同時觸發停損時，對總資產的影響限於 1–2%。',
+    en: 'Total open risk: if every stop hit at once, the account loses no more than 1–2%.' },
+
+  // --- 8. Rules ---
+  { cat: 'Rules', zh: '絕不逆 200MA 斜率做多。',
+    en: 'Never long against the 200MA slope. Period.' },
+  { cat: 'Rules', zh: '始終保持相對強度思維 —— 只留最強的股票。',
+    en: 'Pursue relative strength. Cull the weak. Hold only the strongest.' },
+
+  // --- 9. Mindset ---
+  { cat: 'Mindset', zh: '心理韌性源於對系統概率的終極信任。',
+    en: 'Mental resilience comes from absolute trust in the system’s probabilities, not any single outcome.' },
+  { cat: 'Mindset', zh: '正確的決策是「符合系統規則的決策」，而非單純盈利的決策。',
+    en: 'A correct decision follows the rules — not necessarily one that made money. Process > outcome.' },
+  { cat: 'Mindset', zh: '圖表上的量價是唯一真相 —— 專家預測只是噪音。',
+    en: 'Price-volume on the chart is the only truth. Pundit forecasts are noise.' },
+  { cat: 'Mindset', zh: '復仇交易禁令：連續虧損時強制進入冷靜期。',
+    en: 'No revenge trading. After consecutive losses, force yourself into a cooling-off window.' },
+
+  // --- 10. Routine ---
+  { cat: 'Routine', zh: '穩定業績源於精確的重複。',
+    en: 'Steady performance comes from precise repetition. The boring days build the engine.' },
+  { cat: 'Routine', zh: 'Model Book：記錄所有符合 M.E.T.A. 且獲利的經典案例 —— 建立你的識別記憶庫。',
+    en: 'Build a Model Book of every M.E.T.A. winner. Pattern recognition compounds with reps.' },
+  { cat: 'Routine', zh: '系統與交易員合一之日，即是超績誕生之時。',
+    en: 'When the system and the trader become one — that is the day super-performance is born.' },
+];
+
+// Persist current handbook index across sessions
+let handbookIndex = 0;
+
+function handbookDayIndex() {
+  // Day-of-year so the principle changes daily by default
+  const d = new Date();
+  const start = new Date(d.getFullYear(), 0, 0);
+  const diff = (d - start) + (start.getTimezoneOffset() - d.getTimezoneOffset()) * 60 * 1000;
+  const day = Math.floor(diff / 86400000);
+  return day % HANDBOOK.length;
+}
+
+function renderHandbook() {
+  const item = HANDBOOK[handbookIndex] || HANDBOOK[0];
+  const zh = $('#hbZh'), en = $('#hbEn'), cat = $('#hbCategory'), cnt = $('#hbCounter');
+  if (!zh) return;
+  zh.textContent = item.zh;
+  en.textContent = item.en;
+  cat.textContent = item.cat;
+  cnt.textContent = `${handbookIndex + 1} / ${HANDBOOK.length}`;
+  // subtle fade for transitions
+  [zh, en].forEach(el => {
+    el.style.transition = 'none';
+    el.style.opacity = '0';
+    requestAnimationFrame(() => {
+      el.style.transition = 'opacity 0.35s ease';
+      el.style.opacity = '1';
+    });
+  });
+}
+
+function wireHandbook() {
+  const initial = (S.handbook && Number.isInteger(S.handbook.lastIndex))
+    ? S.handbook.lastIndex
+    : handbookDayIndex();
+  handbookIndex = ((initial % HANDBOOK.length) + HANDBOOK.length) % HANDBOOK.length;
+  renderHandbook();
+
+  const persist = () => {
+    if (!S.handbook) S.handbook = {};
+    S.handbook.lastIndex = handbookIndex;
+    saveState();
+  };
+  $('#hbPrev')?.addEventListener('click', () => {
+    handbookIndex = (handbookIndex - 1 + HANDBOOK.length) % HANDBOOK.length;
+    renderHandbook(); persist();
+  });
+  $('#hbNext')?.addEventListener('click', () => {
+    handbookIndex = (handbookIndex + 1) % HANDBOOK.length;
+    renderHandbook(); persist();
+  });
+  $('#hbShuffle')?.addEventListener('click', () => {
+    let next = handbookIndex;
+    if (HANDBOOK.length > 1) {
+      while (next === handbookIndex) next = Math.floor(Math.random() * HANDBOOK.length);
+    }
+    handbookIndex = next;
+    renderHandbook(); persist();
+  });
+
+  // Restore checklist state
+  $$('[data-hb-check]').forEach(cb => {
+    const key = cb.dataset.hbCheck;
+    if (S.handbook && S.handbook.check && S.handbook.check[key]) cb.checked = true;
+    cb.addEventListener('change', () => {
+      if (!S.handbook) S.handbook = {};
+      if (!S.handbook.check) S.handbook.check = {};
+      S.handbook.check[key] = cb.checked;
+      saveState();
+    });
+  });
+}
+
 // ---------------- Quotes ----------------
 const quotes = [
   'Discipline is freedom. — Aristotle',
@@ -1481,6 +1649,7 @@ function renderAll() {
 function init() {
   loadState();
   wireEvents();
+  wireHandbook();
   setQuote();
   renderAll();
   tick();

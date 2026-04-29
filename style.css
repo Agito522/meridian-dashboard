@@ -314,6 +314,7 @@ textarea { resize: vertical; }
 .kpi-card     { grid-column: span 7; }
 .journal-card { grid-column: span 5; }
 .equity-card  { grid-column: span 12; }
+.handbook-card { grid-column: span 12; }
 .trade-card   { grid-column: span 12; }
 .controls-card { grid-column: span 12; }
 
@@ -1584,4 +1585,177 @@ input:focus, select:focus, textarea:focus {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ============ TRADER'S HANDBOOK ============ */
+.handbook-card {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(183,132,40,0.08), transparent 45%),
+    radial-gradient(circle at 0% 100%, rgba(12,107,114,0.08), transparent 50%),
+    var(--surface-1);
+  position: relative;
+  overflow: hidden;
+}
+.handbook-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(45deg, transparent 0 18px, rgba(183,132,40,0.025) 18px 19px);
+  pointer-events: none;
+}
+.hb-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hb-tag {
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft, rgba(183,132,40,0.12));
+  color: var(--primary);
+  border: 1px solid var(--primary-soft, rgba(183,132,40,0.25));
+  white-space: nowrap;
+}
+.hb-nav {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s ease;
+}
+.hb-nav:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-soft, rgba(183,132,40,0.08));
+}
+.hb-shuffle { font-size: 14px; }
+
+.hb-body {
+  position: relative;
+  padding: 20px 8px 4px;
+  max-width: 880px;
+}
+.hb-mark {
+  position: absolute;
+  top: -8px;
+  left: -4px;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 84px;
+  line-height: 1;
+  color: var(--primary);
+  opacity: 0.18;
+  pointer-events: none;
+  user-select: none;
+}
+.hb-zh {
+  font-family: var(--font-display, Georgia, serif);
+  font-size: clamp(18px, 2.4vw, 24px);
+  line-height: 1.55;
+  color: var(--text);
+  margin: 0 0 14px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+.hb-en {
+  font-family: var(--font-body, Inter, sans-serif);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  margin: 0 0 18px;
+  font-style: italic;
+}
+.hb-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--divider);
+  font-family: var(--font-mono, "JetBrains Mono", monospace);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.hb-source { color: var(--primary); opacity: 0.85; }
+.hb-counter { font-variant-numeric: tabular-nums; }
+
+.hb-checklist {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md, 8px);
+  background: var(--surface-2, rgba(0,0,0,0.02));
+}
+.hb-checklist summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hb-checklist summary::-webkit-details-marker { display: none; }
+.hb-checklist summary::before {
+  content: "▸";
+  color: var(--primary);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+.hb-checklist[open] summary::before { transform: rotate(90deg); }
+.hb-check-list {
+  list-style: none;
+  padding: 12px 0 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hb-check-list li label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+.hb-check-list li label:hover { background: var(--primary-soft, rgba(183,132,40,0.06)); }
+.hb-check-list input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+.hb-check-list input:checked ~ span {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 1px;
+}
+.hb-check-list strong {
+  color: var(--primary);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+@media (max-width: 720px) {
+  .hb-controls { flex-wrap: wrap; }
+  .hb-mark { font-size: 60px; }
 }
