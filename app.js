@@ -23,6 +23,7 @@ const defaultState = () => ({
   },
   streak: { count: 0, lastActive: null },
   handbook: { lastIndex: null, check: {} },
+  subs: { items: [], baseCurrency: 'USD' },
   lastSaved: null,
 });
 
@@ -38,6 +39,8 @@ function loadState() {
       S.equity = { ...defaultState().equity, ...(loaded.equity || {}) };
       S.streak = { ...defaultState().streak, ...(loaded.streak || {}) };
       S.handbook = { ...defaultState().handbook, ...(loaded.handbook || {}) };
+      S.subs = { ...defaultState().subs, ...(loaded.subs || {}) };
+      if (!Array.isArray(S.subs.items)) S.subs.items = [];
     }
   } catch (e) { /* storage unavailable — fall back to in-memory */ }
 }
@@ -1390,6 +1393,273 @@ function wireHandbook() {
   });
 }
 
+// ---------------- Subscriptions ----------------
+// FX rates anchored to USD (approx, April 2026). User-editable in code.
+// CNY ~ 7.20 per USD; HKD ~ 7.80 per USD.
+const FX_TO_USD = { USD: 1, HKD: 1 / 7.80, CNY: 1 / 7.20 };
+const CURRENCY_SYMBOL = { USD: '$', HKD: 'HK$', CNY: '¥' };
+
+const NATURE_LABEL = {
+  ai: 'AI',
+  office: 'Office',
+  patreon: 'Patreon',
+  investment: 'Investment',
+  news: 'News',
+  cloud: 'Cloud',
+  entertainment: 'Entertainment',
+  health: 'Health',
+  other: 'Other',
+};
+
+const PERIOD_MONTHS = {
+  weekly: 12 / 52,      // ≈ 0.230 months
+  monthly: 1,
+  quarterly: 3,
+  semiannual: 6,
+  yearly: 12,
+};
+
+const PERIOD_DAYS = {
+  weekly: 7,
+  monthly: 30,
+  quarterly: 91,
+  semiannual: 182,
+  yearly: 365,
+};
+
+let subFilter = 'all';
+let subSearch = '';
+
+function toUSD(amount, currency) {
+  return (+amount || 0) * (FX_TO_USD[currency] || 1);
+}
+function fromUSD(amountUsd, currency) {
+  const rate = FX_TO_USD[currency] || 1;
+  return amountUsd / rate;
+}
+function fmtMoney(amount, currency) {
+  const sym = CURRENCY_SYMBOL[currency] || '';
+  const v = Math.abs(amount) >= 1000
+    ? amount.toLocaleString(undefined, { maximumFractionDigits: 0 })
+    : amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return `${sym}${v}`;
+}
+function monthlyCostUSD(item) {
+  const months = PERIOD_MONTHS[item.period] || 1;
+  return toUSD(item.fee, item.currency) / months;
+}
+function daysUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d)) return null;
+  const now = new Date();
+  now.setHours(0, 0, 0, 0);
+  return Math.round((d - now) / 86400000);
+}
+function matchesSubSearch(s) {
+  if (!subSearch) return true;
+  const q = subSearch.toLowerCase();
+  return (s.name || '').toLowerCase().includes(q)
+      || (s.note || '').toLowerCase().includes(q)
+      || (NATURE_LABEL[s.nature] || '').toLowerCase().includes(q);
+}
+
+function renderSubscriptions() {
+  const root = $('#subsTable');
+  if (!root) return;
+  const base = S.subs.baseCurrency || 'USD';
+  const items = (S.subs.items || []).slice();
+
+  // Filter
+  const visible = items.filter(s => {
+    if (!matchesSubSearch(s)) return false;
+    if (subFilter === 'all') return true;
+    if (subFilter === 'other') {
+      return !['ai','office','patreon','investment'].includes(s.nature);
+    }
+    return s.nature === subFilter;
+  });
+
+  // Sort: items with next-bill date first (soonest), then those without
+  visible.sort((a, b) => {
+    const da = daysUntil(a.nextDate);
+    const db = daysUntil(b.nextDate);
+    if (da == null && db == null) return (a.name || '').localeCompare(b.name || '');
+    if (da == null) return 1;
+    if (db == null) return -1;
+    return da - db;
+  });
+
+  root.innerHTML = '';
+
+  if (items.length === 0) {
+    root.appendChild(h('div', { class: 'subs-empty' },
+      'No subscriptions yet. Add your first one above to start tracking recurring spend.'));
+    renderSubsSummary();
+    return;
+  }
+
+  // Header
+  root.appendChild(h('div', { class: 'subs-table-head' },
+    h('span', {}, 'Service'),
+    h('span', {}, 'Nature'),
+    h('span', {}, 'Fee'),
+    h('span', {}, 'Period'),
+    h('span', {}, `≈ / month (${base})`),
+    h('span', {}, 'Next bill'),
+    h('span', {}, '')
+  ));
+
+  if (visible.length === 0) {
+    root.appendChild(h('div', { class: 'subs-empty' }, 'No subscriptions match this filter.'));
+  } else {
+    visible.forEach(s => {
+      const days = daysUntil(s.nextDate);
+      const cls = ['subs-row'];
+      if (days != null && days < 0) cls.push('overdue');
+      else if (days != null && days <= 7) cls.push('expiring');
+
+      const monthlyDisplay = fromUSD(monthlyCostUSD(s), base);
+      const periodLabel = (s.period || 'monthly').replace('semiannual', 'semi-annual');
+
+      let nextLabel = '—', nextSub = '';
+      if (s.nextDate) {
+        nextLabel = s.nextDate;
+        if (days != null) {
+          if (days < 0) nextSub = `${Math.abs(days)} d overdue`;
+          else if (days === 0) nextSub = 'today';
+          else if (days === 1) nextSub = 'tomorrow';
+          else nextSub = `in ${days} d`;
+        }
+      }
+
+      root.appendChild(h('div', { class: cls.join(' ') },
+        h('div', { class: 'subs-name' },
+          h('strong', {}, s.name),
+          s.note ? h('small', {}, s.note) : h('small', {}, ' ')
+        ),
+        h('span', { class: `sub-nature ${s.nature}` }, NATURE_LABEL[s.nature] || s.nature),
+        h('span', { class: 'subs-fee' },
+          fmtMoney(+s.fee, s.currency),
+          h('small', {}, s.currency)
+        ),
+        h('span', { class: 'subs-period' }, periodLabel),
+        h('span', { class: 'subs-monthly' }, fmtMoney(monthlyDisplay, base)),
+        h('span', { class: 'subs-next' },
+          nextLabel,
+          nextSub ? h('small', {}, nextSub) : null
+        ),
+        h('button', {
+          class: 'subs-del',
+          title: 'Remove this subscription',
+          onClick: (e) => { e.stopPropagation(); deleteSubscription(s.id); }
+        }, '✕')
+      ));
+    });
+  }
+
+  renderSubsSummary();
+}
+
+function renderSubsSummary() {
+  const base = S.subs.baseCurrency || 'USD';
+  const items = S.subs.items || [];
+  const totalMonthlyUsd = items.reduce((sum, s) => sum + monthlyCostUSD(s), 0);
+  const monthlyDisplay = fromUSD(totalMonthlyUsd, base);
+  const yearlyDisplay = monthlyDisplay * 12;
+
+  $('#subsMonthly').textContent = items.length ? fmtMoney(monthlyDisplay, base) : '—';
+  $('#subsYearly').textContent = items.length ? fmtMoney(yearlyDisplay, base) : '—';
+  $('#subsCount').textContent = String(items.length);
+  const baseSel = $('#subsBaseCurrency');
+  if (baseSel && baseSel.value !== base) baseSel.value = base;
+}
+
+function addSubscription(data) {
+  if (!data.name || !data.fee) return;
+  const item = {
+    id: uid(),
+    name: data.name.trim(),
+    nature: data.nature || 'other',
+    fee: parseFloat(data.fee) || 0,
+    currency: data.currency || 'USD',
+    period: data.period || 'monthly',
+    nextDate: data.nextDate || '',
+    note: (data.note || '').trim(),
+    createdAt: Date.now(),
+  };
+  S.subs.items.push(item);
+  saveState();
+  renderSubscriptions();
+}
+
+function deleteSubscription(id) {
+  S.subs.items = (S.subs.items || []).filter(s => s.id !== id);
+  saveState();
+  renderSubscriptions();
+}
+
+function updateSubPreview() {
+  const fee = parseFloat($('#subFee').value);
+  const currency = $('#subCurrency').value;
+  const period = $('#subPeriod').value;
+  const base = S.subs.baseCurrency || 'USD';
+  if (isNaN(fee) || fee <= 0) {
+    $('#subPreview').textContent = '≈ — / month';
+    return;
+  }
+  const months = PERIOD_MONTHS[period] || 1;
+  const monthlyUsd = toUSD(fee, currency) / months;
+  const display = fromUSD(monthlyUsd, base);
+  $('#subPreview').innerHTML = `≈ <strong>${fmtMoney(display, base)}</strong> / month`;
+}
+
+function wireSubscriptions() {
+  $('#subForm')?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    addSubscription({
+      name: $('#subName').value,
+      nature: $('#subNature').value,
+      fee: $('#subFee').value,
+      currency: $('#subCurrency').value,
+      period: $('#subPeriod').value,
+      nextDate: $('#subNextDate').value,
+      note: $('#subNote').value,
+    });
+    // Reset entry-specific fields, keep nature/currency/period for fast batch entry
+    ['#subName','#subFee','#subNextDate','#subNote'].forEach(s => { const el = $(s); if (el) el.value = ''; });
+    $('#subPreview').textContent = '≈ — / month';
+  });
+
+  ['#subFee','#subCurrency','#subPeriod'].forEach(sel => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener('input', updateSubPreview);
+    el.addEventListener('change', updateSubPreview);
+  });
+
+  $$('[data-sub-filter]').forEach(p => {
+    p.addEventListener('click', () => {
+      $$('[data-sub-filter]').forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      subFilter = p.dataset.subFilter;
+      renderSubscriptions();
+    });
+  });
+
+  $('#subSearch')?.addEventListener('input', (e) => {
+    subSearch = e.target.value.trim();
+    renderSubscriptions();
+  });
+
+  $('#subsBaseCurrency')?.addEventListener('change', (e) => {
+    S.subs.baseCurrency = e.target.value;
+    saveState();
+    renderSubscriptions();
+    updateSubPreview();
+  });
+}
+
 // ---------------- Quotes ----------------
 const quotes = [
   'Discipline is freedom. — Aristotle',
@@ -1642,6 +1912,7 @@ function renderAll() {
   renderJournal();
   renderTrades();
   renderEquity();
+  renderSubscriptions();
   renderKPIs();
 }
 
@@ -1650,6 +1921,7 @@ function init() {
   loadState();
   wireEvents();
   wireHandbook();
+  wireSubscriptions();
   setQuote();
   renderAll();
   tick();

@@ -475,6 +475,97 @@
       <div class="trades-table" id="tradesTable"></div>
     </section>
 
+    <!-- ============ SUBSCRIPTIONS ============ -->
+    <section class="card subs-card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Subscriptions</h2>
+          <p class="card-sub">Recurring spend · normalized to USD/month · next renewal first</p>
+        </div>
+        <div class="subs-summary" id="subsSummary">
+          <div class="subs-stat"><span class="subs-stat-k">Monthly</span><span class="subs-stat-v" id="subsMonthly">—</span></div>
+          <div class="subs-stat"><span class="subs-stat-k">Yearly</span><span class="subs-stat-v" id="subsYearly">—</span></div>
+          <div class="subs-stat"><span class="subs-stat-k">Active</span><span class="subs-stat-v" id="subsCount">0</span></div>
+          <select class="subs-fx" id="subsBaseCurrency" title="Display currency">
+            <option value="USD">USD</option>
+            <option value="HKD">HKD</option>
+            <option value="CNY">CNY</option>
+          </select>
+        </div>
+      </div>
+
+      <form class="subs-form" id="subForm" autocomplete="off">
+        <div class="subs-form-grid">
+          <div class="field field-wide">
+            <label for="subName">Service</label>
+            <input id="subName" type="text" placeholder="e.g. Perplexity Pro, ChatGPT, TraderLion" required>
+          </div>
+          <div class="field">
+            <label for="subNature">Nature</label>
+            <select id="subNature">
+              <option value="ai">AI</option>
+              <option value="office">Office</option>
+              <option value="patreon">Patreon</option>
+              <option value="investment">Investment training</option>
+              <option value="news">News &amp; media</option>
+              <option value="cloud">Cloud &amp; storage</option>
+              <option value="entertainment">Entertainment</option>
+              <option value="health">Health</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subFee">Fee</label>
+            <input id="subFee" type="number" step="0.01" min="0" placeholder="20.00" required>
+          </div>
+          <div class="field">
+            <label for="subCurrency">Currency</label>
+            <select id="subCurrency">
+              <option value="USD">USD</option>
+              <option value="HKD">HKD</option>
+              <option value="CNY">CNY</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subPeriod">Period</label>
+            <select id="subPeriod">
+              <option value="monthly">Monthly</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="semiannual">Semi-annual</option>
+              <option value="yearly">Yearly</option>
+              <option value="weekly">Weekly</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="subNextDate">Next bill</label>
+            <input id="subNextDate" type="date">
+          </div>
+          <div class="field field-wide">
+            <label for="subNote">Note (optional)</label>
+            <input id="subNote" type="text" placeholder="e.g. shared with team, annual = $200 saved">
+          </div>
+        </div>
+        <div class="subs-form-foot">
+          <span class="subs-preview" id="subPreview">≈ — / month</span>
+          <button type="submit" class="btn btn-primary">Add subscription</button>
+        </div>
+      </form>
+
+      <div class="subs-toolbar">
+        <div class="filter-pills" role="tablist" aria-label="Filter subscriptions">
+          <button class="pill active" data-sub-filter="all">All</button>
+          <button class="pill" data-sub-filter="ai">AI</button>
+          <button class="pill" data-sub-filter="office">Office</button>
+          <button class="pill" data-sub-filter="patreon">Patreon</button>
+          <button class="pill" data-sub-filter="investment">Investment</button>
+          <button class="pill" data-sub-filter="other">Other</button>
+        </div>
+        <input id="subSearch" class="input search" type="text" placeholder="Search service, note…">
+      </div>
+
+      <div class="subs-table" id="subsTable"></div>
+    </section>
+
     <!-- ============ DATA CONTROLS ============ -->
     <section class="card controls-card">
       <div class="card-head">
