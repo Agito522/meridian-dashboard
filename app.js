@@ -14,8 +14,13 @@ const defaultState = () => ({
   tasks: [],          // { id, title, track, priority, due, done, quad, createdAt }
   habits: [],         // { id, name, log: { 'YYYY-MM-DD': true } }
   reminders: [],      // { id, text, time }
-  trades: [],         // { id, symbol, side, pnl, note, date }
+  trades: [],         // expanded — see addTrade()
   journals: {},       // { 'YYYY-MM-DD': { wins, lessons, tomorrow } }
+  equity: {           // portfolio balance series
+    startDate: '2026-01-01',
+    startBalance: 0,
+    history: {},      // { 'YYYY-MM-DD': balance }
+  },
   streak: { count: 0, lastActive: null },
   lastSaved: null,
 });
@@ -25,7 +30,13 @@ let S = defaultState();
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) S = { ...defaultState(), ...JSON.parse(raw) };
+    if (raw) {
+      const loaded = JSON.parse(raw);
+      S = { ...defaultState(), ...loaded };
+      // Defensive merge for nested objects
+      S.equity = { ...defaultState().equity, ...(loaded.equity || {}) };
+      S.streak = { ...defaultState().streak, ...(loaded.streak || {}) };
+    }
   } catch (e) { /* storage unavailable — fall back to in-memory */ }
 }
 
@@ -567,44 +578,508 @@ function wireJournal() {
   });
 }
 
-// ---------------- Trades ----------------
+// ---------------- Trades (Stonk Journal-inspired) ----------------
+let tradeFilter = 'all';
+let tradeSearch = '';
+let expandedTradeId = null;
+
+/* Compute derived metrics for a trade */
+function tradeMetrics(t) {
+  const sideMul = t.side === 'short' ? -1 : 1;
+  const qty = +t.qty || 0;
+  const entry = +t.entry || 0;
+  const exit = t.exit !== '' && t.exit != null ? +t.exit : null;
+  const stop = t.stop !== '' && t.stop != null ? +t.stop : null;
+  const target = t.target !== '' && t.target != null ? +t.target : null;
+  const fees = +t.fees || 0;
+
+  const open = exit === null;
+  let pnl = null, R = null, plannedRR = null;
+  if (!open && entry && qty) {
+    pnl = (exit - entry) * qty * sideMul - fees;
+  }
+  if (stop && entry && entry !== stop) {
+    const risk = Math.abs(entry - stop);
+    if (!open) R = ((exit - entry) * sideMul) / risk;
+    if (target) plannedRR = Math.abs(target - entry) / risk;
+  }
+  return { open, pnl, R, plannedRR };
+}
+
+function matchesTradeSearch(t) {
+  if (!tradeSearch) return true;
+  const q = tradeSearch.toLowerCase();
+  const tags = (t.tags || []).join(' ').toLowerCase();
+  return (t.symbol || '').toLowerCase().includes(q)
+      || (t.note || '').toLowerCase().includes(q)
+      || (t.setup || '').toLowerCase().includes(q)
+      || tags.includes(q);
+}
+
 function renderTrades() {
-  const ul = $('#trades');
-  ul.innerHTML = '';
-  const trades = S.trades.slice().sort((a, b) => b.date - a.date);
-  trades.forEach(t => {
-    const li = h('li', { class: 'trade' },
-      h('span', { class: 'tr-sym' }, t.symbol.toUpperCase()),
-      h('span', { class: `tr-side ${t.side}` }, t.side),
-      h('span', { class: `tr-pnl ${t.pnl >= 0 ? 'pos' : 'neg'}` }, (t.pnl >= 0 ? '+' : '') + '$' + t.pnl.toFixed(2)),
-      h('span', { class: 'tr-note' }, t.note || '—'),
-      h('span', { class: 'tr-date' }, new Date(t.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })),
-      h('button', { class: 'tr-del', onClick: () => deleteTrade(t.id) }, '✕')
-    );
-    ul.appendChild(li);
+  const root = $('#tradesTable');
+  root.innerHTML = '';
+
+  // Sort: most recent first (closeDate, then openDate, then createdAt)
+  const trades = S.trades.slice().sort((a, b) => {
+    const ad = a.closeDate || a.openDate || 0;
+    const bd = b.closeDate || b.openDate || 0;
+    if (ad === bd) return (b.createdAt || 0) - (a.createdAt || 0);
+    return ad < bd ? 1 : -1;
   });
 
-  const wins = S.trades.filter(t => t.pnl > 0).length;
-  const losses = S.trades.filter(t => t.pnl < 0).length;
-  const total = wins + losses;
-  const pnl = S.trades.reduce((s, t) => s + t.pnl, 0);
-  $('#tsWL').textContent = `${wins}/${losses}`;
-  $('#tsHit').textContent = total ? `${Math.round(wins/total*100)}%` : '—';
+  // Filter
+  const filtered = trades.filter(t => {
+    if (!matchesTradeSearch(t)) return false;
+    const m = tradeMetrics(t);
+    if (tradeFilter === 'open') return m.open;
+    if (tradeFilter === 'win')  return !m.open && m.pnl > 0;
+    if (tradeFilter === 'loss') return !m.open && m.pnl < 0;
+    return true;
+  });
+
+  if (filtered.length === 0) {
+    root.appendChild(h('div', { class: 'trades-empty' },
+      S.trades.length === 0
+        ? 'No trades yet. Log your first one above to start building your edge.'
+        : 'No trades match this filter.'
+    ));
+  } else {
+    // Header (11-column grid in CSS)
+    root.appendChild(h('div', { class: 'trades-table-head' },
+      h('span', {}, 'Date'),
+      h('span', {}, 'Symbol'),
+      h('span', {}, 'Side'),
+      h('span', {}, 'Qty'),
+      h('span', {}, 'Entry'),
+      h('span', {}, 'Exit'),
+      h('span', {}, 'Net P/L'),
+      h('span', {}, 'R'),
+      h('span', {}, 'Setup'),
+      h('span', {}, 'Mood'),
+      h('span', {}, '')
+    ));
+
+    filtered.forEach(t => {
+      const m = tradeMetrics(t);
+      const dateStr = t.closeDate || t.openDate || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : '—');
+      const pnlClass = m.open ? 'open' : (m.pnl >= 0 ? 'pos' : 'neg');
+      const pnlText = m.open ? 'open' : (m.pnl >= 0 ? '+' : '−') + '$' + Math.abs(m.pnl).toFixed(2);
+      const rText = m.open || m.R == null ? '—' : (m.R >= 0 ? '+' : '') + m.R.toFixed(2) + 'R';
+
+      const row = h('div', {
+        class: `trade-row ${expandedTradeId === t.id ? 'expanded' : ''}`,
+        data: { tradeId: t.id },
+        onClick: () => {
+          expandedTradeId = expandedTradeId === t.id ? null : t.id;
+          renderTrades();
+        }
+      },
+        h('span', { class: 'tr-date' }, dateStr.slice(5)),
+        h('span', { class: 'tr-sym' }, (t.symbol || '—').toUpperCase()),
+        h('span', { class: `tr-side ${t.side}` }, t.side || '—'),
+        h('span', { class: 'tr-num' }, t.qty != null ? String(t.qty) : '—'),
+        h('span', { class: 'tr-num' }, t.entry != null ? Number(t.entry).toFixed(2) : '—'),
+        h('span', { class: 'tr-num' }, t.exit != null && t.exit !== '' ? Number(t.exit).toFixed(2) : '·'),
+        h('span', { class: `tr-pnl ${pnlClass}` }, pnlText),
+        h('span', { class: `tr-r ${m.R >= 0 ? 'pos' : 'neg'}` }, rText),
+        h('span', { class: 'tr-num' }, t.setup || '—'),
+        h('span', {}, t.mood ? h('span', { class: `tr-mood ${t.mood}` }, t.mood) : '—'),
+        h('button', {
+          class: 'tr-del',
+          onClick: (e) => { e.stopPropagation(); deleteTrade(t.id); }
+        }, '✕')
+      );
+      root.appendChild(row);
+
+      // Expanded detail (uses .trade-detail with .td-item children)
+      if (expandedTradeId === t.id) {
+        const tags = (t.tags || []).filter(Boolean);
+        const conf = t.confidence || 0;
+        const item = (k, v) => h('div', { class: 'td-item' }, h('label', {}, k), h('span', {}, v));
+        const detail = h('div', { class: 'trade-detail' },
+          item('Market', t.market || '—'),
+          item('Entry', t.entry != null ? '$' + Number(t.entry).toFixed(2) : '—'),
+          item('Exit', t.exit != null && t.exit !== '' ? '$' + Number(t.exit).toFixed(2) : 'open'),
+          item('Stop', t.stop != null && t.stop !== '' ? '$' + Number(t.stop).toFixed(2) : '—'),
+          item('Target', t.target != null && t.target !== '' ? '$' + Number(t.target).toFixed(2) : '—'),
+          item('Fees', '$' + (Number(t.fees) || 0).toFixed(2)),
+          item('Opened', t.openDate || '—'),
+          item('Closed', t.closeDate || '—'),
+          item('Planned R/R', m.plannedRR != null ? m.plannedRR.toFixed(2) : '—'),
+          h('div', { class: 'td-item' },
+            h('label', {}, 'Confidence'),
+            h('span', { class: 'tr-conf' },
+              ...Array.from({ length: 5 }, (_, i) => h('span', { class: `dot ${i < conf ? 'on' : ''}` }))
+            )
+          ),
+          h('div', { class: 'td-item' },
+            h('label', {}, 'Tags'),
+            h('span', {},
+              tags.length
+                ? tags.map(tag => h('span', { class: 'tr-tag' }, tag))
+                : '—'
+            )
+          ),
+          h('div', { class: 'td-item', style: 'grid-column: 1 / -1;' },
+            h('label', {}, 'Notes / thesis'),
+            h('span', { style: 'white-space: pre-wrap; font-family: var(--font-body);' }, t.note || '—')
+          )
+        );
+        root.appendChild(detail);
+      }
+    });
+  }
+
+  renderTradeStats();
+}
+
+function renderTradeStats() {
+  const closed = S.trades.map(t => ({ t, m: tradeMetrics(t) })).filter(x => !x.m.open && x.m.pnl != null);
+  const wins = closed.filter(x => x.m.pnl > 0);
+  const losses = closed.filter(x => x.m.pnl < 0);
+  const total = closed.length;
+  const totalPnl = closed.reduce((s, x) => s + x.m.pnl, 0);
+  const grossWin = wins.reduce((s, x) => s + x.m.pnl, 0);
+  const grossLoss = Math.abs(losses.reduce((s, x) => s + x.m.pnl, 0));
+  const avgWin = wins.length ? grossWin / wins.length : 0;
+  const avgLoss = losses.length ? grossLoss / losses.length : 0;
+  const winRate = total ? wins.length / total : 0;
+  const lossRate = total ? losses.length / total : 0;
+  const expectancy = total ? (winRate * avgWin) - (lossRate * avgLoss) : 0;
+  const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0);
+  const rTrades = closed.filter(x => x.m.R != null);
+  const avgR = rTrades.length ? rTrades.reduce((s, x) => s + x.m.R, 0) / rTrades.length : null;
+
+  $('#tsWL').textContent = `${wins.length}/${losses.length}`;
+  $('#tsHit').textContent = total ? `${Math.round(winRate * 100)}%` : '—';
   const pnlEl = $('#tsPnl');
-  pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(2);
-  pnlEl.style.color = pnl >= 0 ? 'var(--success)' : 'var(--danger)';
+  pnlEl.textContent = total ? (totalPnl >= 0 ? '+$' : '−$') + Math.abs(totalPnl).toFixed(2) : '—';
+  pnlEl.style.color = totalPnl >= 0 ? 'var(--success)' : 'var(--danger)';
+
+  const avgREl = $('#tsAvgR'); if (avgREl) avgREl.textContent = avgR == null ? '—' : (avgR >= 0 ? '+' : '') + avgR.toFixed(2) + 'R';
+  const pfEl = $('#tsPF'); if (pfEl) pfEl.textContent = !total ? '—' : (pf === Infinity ? '∞' : pf.toFixed(2));
+  const expEl = $('#tsExp'); if (expEl) expEl.textContent = !total ? '—' : (expectancy >= 0 ? '+$' : '−$') + Math.abs(expectancy).toFixed(2);
 }
 
 function addTrade(data) {
-  S.trades.push({ id: uid(), ...data, date: Date.now() });
+  // Capture and normalize fields
+  const trade = {
+    id: uid(),
+    market: data.market || 'stock',
+    symbol: (data.symbol || '').trim().toUpperCase(),
+    side: data.side || 'long',
+    qty: data.qty !== '' && data.qty != null ? +data.qty : null,
+    entry: data.entry !== '' && data.entry != null ? +data.entry : null,
+    exit: data.exit !== '' && data.exit != null ? +data.exit : null,
+    stop: data.stop !== '' && data.stop != null ? +data.stop : null,
+    target: data.target !== '' && data.target != null ? +data.target : null,
+    fees: data.fees !== '' && data.fees != null ? +data.fees : 0,
+    openDate: data.openDate || todayKey(),
+    closeDate: data.closeDate || (data.exit !== '' && data.exit != null ? todayKey() : null),
+    setup: data.setup || '',
+    mood: data.mood || '',
+    confidence: data.confidence ? +data.confidence : 3,
+    tags: (data.tags || '').split(',').map(s => s.trim()).filter(Boolean),
+    note: (data.note || '').trim(),
+    createdAt: Date.now(),
+  };
+  S.trades.push(trade);
   saveState();
   renderTrades();
 }
 
 function deleteTrade(id) {
   S.trades = S.trades.filter(t => t.id !== id);
+  if (expandedTradeId === id) expandedTradeId = null;
   saveState();
   renderTrades();
+}
+
+function updateTradePreview() {
+  const entry = parseFloat($('#trEntry').value);
+  const exit = parseFloat($('#trExit').value);
+  const stop = parseFloat($('#trStop').value);
+  const target = parseFloat($('#trTarget').value);
+  const qty = parseFloat($('#trQty').value);
+  const fees = parseFloat($('#trFees').value) || 0;
+  const sideMul = $('#trSide').value === 'short' ? -1 : 1;
+
+  let netStr = '—', rStr = '—', rrStr = '—';
+  if (!isNaN(entry) && !isNaN(exit) && !isNaN(qty)) {
+    const pnl = (exit - entry) * qty * sideMul - fees;
+    netStr = (pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2);
+  }
+  if (!isNaN(entry) && !isNaN(stop) && entry !== stop) {
+    const risk = Math.abs(entry - stop);
+    if (!isNaN(exit)) {
+      const R = ((exit - entry) * sideMul) / risk;
+      rStr = (R >= 0 ? '+' : '') + R.toFixed(2) + 'R';
+    }
+    if (!isNaN(target)) {
+      rrStr = (Math.abs(target - entry) / risk).toFixed(2);
+    }
+  }
+  $('#trPreview').textContent = `Net P/L ${netStr} · R ${rStr} · R/R ${rrStr}`;
+}
+
+// ---------------- Equity Curve ----------------
+let eqRange = 'all';
+
+function equitySeries() {
+  // Build sorted [{date, balance}] from start + history
+  const arr = [];
+  if (S.equity.startBalance > 0 || Object.keys(S.equity.history).length > 0) {
+    arr.push({ date: S.equity.startDate, balance: S.equity.startBalance });
+  }
+  Object.keys(S.equity.history).forEach(d => {
+    if (d !== S.equity.startDate) {
+      arr.push({ date: d, balance: S.equity.history[d] });
+    } else {
+      // Replace start point with logged value if user logged a closing balance for the same day
+      arr[0] = { date: d, balance: S.equity.history[d] };
+    }
+  });
+  return arr.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+}
+
+function filterEquityRange(series) {
+  if (eqRange === 'all' || series.length === 0) return series;
+  const last = new Date(series[series.length - 1].date + 'T00:00:00');
+  let cutoff;
+  if (eqRange === 'ytd') {
+    cutoff = new Date(last.getFullYear(), 0, 1);
+  } else if (eqRange === '3m') {
+    cutoff = new Date(last); cutoff.setMonth(cutoff.getMonth() - 3);
+  } else if (eqRange === '1m') {
+    cutoff = new Date(last); cutoff.setMonth(cutoff.getMonth() - 1);
+  } else {
+    return series;
+  }
+  const cutoffKey = dateKey(cutoff);
+  return series.filter(p => p.date >= cutoffKey);
+}
+
+function renderEquity() {
+  const series = equitySeries();
+  const filtered = filterEquityRange(series);
+
+  // Stats use full series (start & current always reflect overall)
+  const start = series.length ? series[0].balance : S.equity.startBalance;
+  const current = series.length ? series[series.length - 1].balance : S.equity.startBalance;
+  const ret = start > 0 ? ((current - start) / start) * 100 : 0;
+
+  // Max drawdown across full series
+  let peak = -Infinity, maxDD = 0;
+  series.forEach(p => {
+    if (p.balance > peak) peak = p.balance;
+    if (peak > 0) {
+      const dd = ((peak - p.balance) / peak) * 100;
+      if (dd > maxDD) maxDD = dd;
+    }
+  });
+
+  $('#eqStart').textContent = start > 0 ? '$' + start.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+  $('#eqCurrent').textContent = series.length ? '$' + current.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+  const retEl = $('#eqReturn');
+  retEl.textContent = series.length > 1 ? (ret >= 0 ? '+' : '') + ret.toFixed(2) + '%' : '—';
+  retEl.style.color = ret >= 0 ? 'var(--success)' : 'var(--danger)';
+  $('#eqDD').textContent = series.length > 1 ? '−' + maxDD.toFixed(2) + '%' : '—';
+
+  // Sync inputs with state
+  const sd = $('#eqStartDate'); if (sd && document.activeElement !== sd) sd.value = S.equity.startDate;
+  const sa = $('#eqStartAmt'); if (sa && document.activeElement !== sa && S.equity.startBalance) sa.value = S.equity.startBalance;
+
+  renderEquityTable(series);
+  drawEquityChart(filtered);
+}
+
+function renderEquityTable(series) {
+  const root = $('#eqTable');
+  if (!root) return;
+  $('#eqCount').textContent = Object.keys(S.equity.history).length;
+  root.innerHTML = '';
+  if (series.length === 0) {
+    root.appendChild(h('div', { class: 'eq-empty' }, 'No balance entries yet. Set a starting balance, then log your daily closing balance to build your equity curve.'));
+    return;
+  }
+  const reverse = series.slice().reverse();
+  reverse.forEach((p, idx) => {
+    const prev = reverse[idx + 1];
+    const delta = prev ? p.balance - prev.balance : null;
+    const isStart = p.date === S.equity.startDate && idx === reverse.length - 1;
+    root.appendChild(h('div', { class: `eq-row ${isStart ? 'start' : ''}` },
+      h('span', { class: 'eq-date' }, p.date),
+      h('span', { class: 'eq-bal' }, '$' + p.balance.toLocaleString(undefined, { maximumFractionDigits: 2 })),
+      h('span', { class: `eq-change ${delta == null ? '' : delta >= 0 ? 'pos' : 'neg'}` },
+        delta == null ? (isStart ? 'start' : '—') : (delta >= 0 ? '+$' : '−$') + Math.abs(delta).toLocaleString(undefined, { maximumFractionDigits: 2 })
+      ),
+      h('button', {
+        class: 'eq-del',
+        title: 'Remove this entry',
+        onClick: (e) => {
+          e.stopPropagation();
+          if (p.date === S.equity.startDate && S.equity.history[p.date] === undefined) return;
+          delete S.equity.history[p.date];
+          saveState();
+          renderEquity();
+        }
+      }, '✕')
+    ));
+  });
+}
+
+function drawEquityChart(series) {
+  const canvas = $('#equityCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 600;
+  const H = 260;
+  canvas.width = w * dpr;
+  canvas.height = H * dpr;
+  canvas.style.height = H + 'px';
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, H);
+
+  const cs = getComputedStyle(document.documentElement);
+  const get = (n) => cs.getPropertyValue(n).trim();
+  const colorPrimary = get('--primary') || '#b78428';
+  const colorMuted = get('--text-muted') || '#888';
+  const colorBorder = get('--border') || '#ccc';
+  const colorDanger = get('--danger') || '#a23b2c';
+  const colorAccent = get('--accent') || '#0c6b72';
+
+  if (series.length === 0) {
+    ctx.fillStyle = colorMuted;
+    ctx.font = '12px Inter, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Set a start balance to begin tracking your equity curve', w / 2, H / 2);
+    return;
+  }
+
+  const padL = 56, padR = 16, padT = 16, padB = 32;
+  const chartW = w - padL - padR;
+  const chartH = H - padT - padB;
+
+  const balances = series.map(p => p.balance);
+  let minB = Math.min(...balances);
+  let maxB = Math.max(...balances);
+  const span = maxB - minB || Math.max(1, maxB * 0.1);
+  minB -= span * 0.05; maxB += span * 0.05;
+
+  const x = i => padL + (series.length === 1 ? chartW / 2 : (i / (series.length - 1)) * chartW);
+  const y = b => padT + (1 - (b - minB) / (maxB - minB)) * chartH;
+
+  // Y gridlines (4)
+  ctx.strokeStyle = colorBorder;
+  ctx.fillStyle = colorMuted;
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'right';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const v = minB + (maxB - minB) * (i / 4);
+    const yy = y(v);
+    ctx.globalAlpha = 0.35;
+    ctx.beginPath(); ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.fillText('$' + Math.round(v).toLocaleString(), padL - 6, yy + 3);
+  }
+
+  // Drawdown shading
+  if ($('#eqShowDD') && $('#eqShowDD').checked && series.length > 1) {
+    let peak = -Infinity;
+    ctx.fillStyle = colorDanger;
+    ctx.globalAlpha = 0.12;
+    ctx.beginPath();
+    let started = false;
+    series.forEach((p, i) => {
+      if (p.balance > peak) peak = p.balance;
+      if (peak > p.balance) {
+        const xi = x(i);
+        if (!started) { ctx.moveTo(xi, y(peak)); started = true; }
+        ctx.lineTo(xi, y(peak));
+      }
+    });
+    // back along current line
+    for (let i = series.length - 1; i >= 0; i--) {
+      ctx.lineTo(x(i), y(series[i].balance));
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // Filled gradient under main line
+  const grad = ctx.createLinearGradient(0, padT, 0, padT + chartH);
+  grad.addColorStop(0, colorPrimary + '55');
+  grad.addColorStop(1, colorPrimary + '00');
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.moveTo(x(0), padT + chartH);
+  series.forEach((p, i) => ctx.lineTo(x(i), y(p.balance)));
+  ctx.lineTo(x(series.length - 1), padT + chartH);
+  ctx.closePath();
+  ctx.fill();
+
+  // Main line
+  ctx.strokeStyle = colorPrimary;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  series.forEach((p, i) => i === 0 ? ctx.moveTo(x(i), y(p.balance)) : ctx.lineTo(x(i), y(p.balance)));
+  ctx.stroke();
+
+  // Points
+  ctx.fillStyle = colorPrimary;
+  series.forEach((p, i) => {
+    ctx.beginPath();
+    ctx.arc(x(i), y(p.balance), 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  // 10-day SMA
+  if ($('#eqShowMA') && $('#eqShowMA').checked && series.length >= 3) {
+    const window = Math.min(10, Math.max(2, Math.floor(series.length / 2)));
+    ctx.strokeStyle = colorAccent;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    let drew = false;
+    for (let i = window - 1; i < series.length; i++) {
+      let sum = 0;
+      for (let j = i - window + 1; j <= i; j++) sum += series[j].balance;
+      const ma = sum / window;
+      if (!drew) { ctx.moveTo(x(i), y(ma)); drew = true; }
+      else ctx.lineTo(x(i), y(ma));
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // X axis date labels (start, mid, end)
+  ctx.fillStyle = colorMuted;
+  ctx.font = '10px "JetBrains Mono", monospace';
+  ctx.textAlign = 'center';
+  const labelIdxs = series.length <= 2 ? [0, series.length - 1] : [0, Math.floor(series.length / 2), series.length - 1];
+  [...new Set(labelIdxs)].forEach(i => {
+    ctx.fillText(series[i].date.slice(5), x(i), padT + chartH + 18);
+  });
+}
+
+function setEquityStart(date, amount) {
+  if (date) S.equity.startDate = date;
+  if (amount != null && !isNaN(amount)) S.equity.startBalance = +amount;
+  saveState();
+  renderEquity();
+}
+
+function logBalance(date, amount) {
+  if (!date || isNaN(amount)) return;
+  S.equity.history[date] = +amount;
+  saveState();
+  renderEquity();
 }
 
 // ---------------- KPI + Chart ----------------
@@ -741,8 +1216,9 @@ function initTheme() {
     btn.innerHTML = next === 'dark'
       ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
       : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
-    // Redraw chart with theme colors
+    // Redraw charts with theme colors
     renderKPIs();
+    renderEquity();
   });
 }
 
@@ -874,21 +1350,100 @@ function wireEvents() {
   // Journal
   wireJournal();
 
-  // Trades
+  // Trades — expanded Stonk Journal-style form
   $('#tradeAdd').addEventListener('submit', (e) => {
     e.preventDefault();
     const symbol = $('#trSymbol').value.trim();
     if (!symbol) return;
     addTrade({
+      market: $('#trMarket').value,
       symbol,
       side: $('#trSide').value,
-      pnl: parseFloat($('#trPnl').value || '0'),
-      note: $('#trNote').value.trim(),
+      qty: $('#trQty').value,
+      entry: $('#trEntry').value,
+      exit: $('#trExit').value,
+      stop: $('#trStop').value,
+      target: $('#trTarget').value,
+      fees: $('#trFees').value,
+      openDate: $('#trOpenDate').value,
+      closeDate: $('#trCloseDate').value,
+      setup: $('#trSetup').value,
+      mood: $('#trMood').value,
+      confidence: $('#trConf').value,
+      tags: $('#trTags').value,
+      note: $('#trNote').value,
     });
-    $('#trSymbol').value = '';
-    $('#trPnl').value = '';
-    $('#trNote').value = '';
+    // Reset only the entry-specific fields
+    ['#trSymbol','#trQty','#trEntry','#trExit','#trStop','#trTarget','#trFees','#trTags','#trNote','#trOpenDate','#trCloseDate']
+      .forEach(s => { const el = $(s); if (el) el.value = ''; });
+    $('#trConf').value = 3;
+    $('#trConfVal').textContent = '3/5';
+    $('#trPreview').textContent = 'Net P/L — · R — · R/R —';
   });
+
+  // Live preview as user types prices
+  ['#trEntry','#trExit','#trStop','#trTarget','#trQty','#trFees','#trSide'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('input', updateTradePreview);
+    if (el && el.tagName === 'SELECT') el.addEventListener('change', updateTradePreview);
+  });
+
+  // Confidence slider value display
+  const trConf = $('#trConf');
+  if (trConf) {
+    trConf.addEventListener('input', () => {
+      $('#trConfVal').textContent = `${trConf.value}/5`;
+    });
+  }
+
+  // Trade filter pills
+  $$('[data-trade-filter]').forEach(p => {
+    p.addEventListener('click', () => {
+      $$('[data-trade-filter]').forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      tradeFilter = p.dataset.tradeFilter;
+      renderTrades();
+    });
+  });
+
+  // Trade search
+  const trSearch = $('#trSearch');
+  if (trSearch) trSearch.addEventListener('input', () => {
+    tradeSearch = trSearch.value.trim();
+    renderTrades();
+  });
+
+  // ---- Equity Curve ----
+  const eqSetStart = $('#eqSetStart');
+  if (eqSetStart) eqSetStart.addEventListener('click', () => {
+    const date = $('#eqStartDate').value;
+    const amt = parseFloat($('#eqStartAmt').value);
+    if (!isNaN(amt)) setEquityStart(date, amt);
+  });
+
+  const eqLogBtn = $('#eqLogBtn');
+  if (eqLogBtn) eqLogBtn.addEventListener('click', () => {
+    const date = $('#eqLogDate').value || todayKey();
+    const amt = parseFloat($('#eqLogAmt').value);
+    if (!isNaN(amt)) {
+      logBalance(date, amt);
+      $('#eqLogAmt').value = '';
+    }
+  });
+
+  ['#eqShowMA','#eqShowDD'].forEach(s => {
+    const el = $(s);
+    if (el) el.addEventListener('change', renderEquity);
+  });
+  const eqRangeEl = $('#eqRange');
+  if (eqRangeEl) eqRangeEl.addEventListener('change', () => {
+    eqRange = eqRangeEl.value;
+    renderEquity();
+  });
+
+  // Default the log date input to today
+  const eqLogDate = $('#eqLogDate');
+  if (eqLogDate && !eqLogDate.value) eqLogDate.value = todayKey();
 
   // Range tabs
   $$('.range-tabs .pill').forEach(p => {
@@ -918,6 +1473,7 @@ function renderAll() {
   renderReminders();
   renderJournal();
   renderTrades();
+  renderEquity();
   renderKPIs();
 }
 
@@ -930,7 +1486,7 @@ function init() {
   tick();
   setInterval(tick, 1000);
   setInterval(() => { renderReminders(); checkReminderFiring(); }, 30000);
-  window.addEventListener('resize', () => renderKPIs());
+  window.addEventListener('resize', () => { renderKPIs(); renderEquity(); });
 }
 
 if (document.readyState === 'loading') {
