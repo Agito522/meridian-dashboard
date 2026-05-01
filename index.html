@@ -50,6 +50,16 @@
 
   <div class="skin-banner" aria-hidden="true"></div>
 
+  <!-- ============ QUICK-ACTION TOOLBAR ============ -->
+  <nav class="qa-bar" aria-label="Quick actions">
+    <button class="qa-btn" data-qa="task" title="Add task"><span class="qa-ico">+</span><span>Task</span></button>
+    <button class="qa-btn" data-qa="plan" title="Add trade battle plan"><span class="qa-ico">+</span><span>Plan</span></button>
+    <button class="qa-btn" data-qa="habit" title="Tick today's habits"><span class="qa-ico">✓</span><span>Habit tick</span></button>
+    <button class="qa-btn" data-qa="journal" title="Jump to journal"><span class="qa-ico">✎</span><span>Journal</span></button>
+    <button class="qa-btn" data-qa="idea" title="Capture idea"><span class="qa-ico">✸</span><span>Idea</span></button>
+    <button class="qa-btn" data-qa="reading" title="Add to reading log"><span class="qa-ico">☆</span><span>Reading</span></button>
+  </nav>
+
   <main class="grid">
     <!-- ============ HERO / DAILY FOCUS ============ -->
     <section class="card hero">
@@ -81,6 +91,12 @@
             <button class="chip" data-intent="Deep work before market open.">Morning deep work</button>
             <button class="chip" data-intent="Close one networking loop.">Network outreach</button>
           </div>
+        </div>
+        <!-- Brain-dump capture lane -->
+        <div class="capture">
+          <label class="capture-label">Brain dump <span class="capture-hint">⏎ to capture</span></label>
+          <input type="text" id="captureInput" class="capture-input" placeholder="One line — anything on your mind. Triage later." />
+          <div class="capture-list" id="captureList"></div>
         </div>
       </div>
     </section>
@@ -715,6 +731,88 @@
       </form>
 
       <div class="quotes-list" id="quotesList"></div>
+    </section>
+
+    <!-- ============ PROJECTS ============ -->
+    <section class="card projects-card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Projects</h2>
+          <p class="card-sub">Containers above tasks · every active project gets a goal, deadline, progress %</p>
+        </div>
+      </div>
+      <form class="project-form" id="projectAdd">
+        <input type="text" id="projName" placeholder="Project name" required />
+        <input type="text" id="projGoal" placeholder="Goal / definition of done" />
+        <input type="date" id="projDeadline" />
+        <select id="projArea">
+          <option value="">Area…</option>
+          <option value="Trading">Trading</option>
+          <option value="Career">Career</option>
+          <option value="Health">Health</option>
+          <option value="Learning">Learning</option>
+          <option value="Finance">Finance</option>
+          <option value="Relationships">Relationships</option>
+        </select>
+        <button type="submit" class="btn-primary">Forge project</button>
+      </form>
+      <div class="project-list" id="projectList"></div>
+    </section>
+
+    <!-- ============ WEEKLY REVIEW ============ -->
+    <section class="card review-card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Weekly review</h2>
+          <p class="card-sub">Sunday post-mortem · Minervini ritual · wins / losses / lessons</p>
+        </div>
+        <div class="rv-controls">
+          <button class="rv-nav" id="rvPrev" aria-label="Previous week">‹</button>
+          <span class="rv-week" id="rvWeekLabel">—</span>
+          <button class="rv-nav" id="rvNext" aria-label="Next week">›</button>
+        </div>
+      </div>
+      <div class="review-rolled" id="reviewRolled">
+        <!-- Auto-rolled metrics injected by JS -->
+      </div>
+      <div class="review-grid">
+        <div class="jsec">
+          <label>Wins</label>
+          <textarea id="rvWins" placeholder="What did you actually crush this week?"></textarea>
+        </div>
+        <div class="jsec">
+          <label>Losses</label>
+          <textarea id="rvLosses" placeholder="Where did the system break? Be honest."></textarea>
+        </div>
+        <div class="jsec">
+          <label>Lessons</label>
+          <textarea id="rvLessons" placeholder="One sentence per insight worth remembering."></textarea>
+        </div>
+        <div class="jsec">
+          <label>Next week</label>
+          <textarea id="rvNext" placeholder="What will you do differently? Carries forward as next week's top task."></textarea>
+          <button class="btn-ghost" id="rvCarryBtn" type="button" title="Convert each line into a task">→ Carry into tasks</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ NOTES / IDEAS VAULT ============ -->
+    <section class="card notes-card">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">Codex of ideas</h2>
+          <p class="card-sub">Theses · takeaways · cross-link to trades by symbol</p>
+        </div>
+        <input type="text" id="notesSearch" class="notes-search" placeholder="Search notes…" />
+      </div>
+      <form class="notes-form" id="noteAdd">
+        <input type="text" id="noteTitle" placeholder="Title (e.g. BIDU thesis)" required />
+        <input type="text" id="noteSymbol" placeholder="Link symbol (optional)" />
+        <input type="text" id="noteTags" placeholder="Tags, comma-separated" />
+        <textarea id="noteBody" placeholder="Body — thesis, takeaway, observation…" required></textarea>
+        <button type="submit" class="btn-primary">Inscribe note</button>
+      </form>
+      <div class="notes-list" id="notesList"></div>
     </section>
 
     <!-- ============ DATA CONTROLS ============ -->

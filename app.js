@@ -29,6 +29,11 @@ const defaultState = () => ({
   skills: [],         // { id, name, category, level (0-5), note, createdAt }
   books: [],          // { id, title, author, status, progress, started, finished, rating, notes }
   quotes: null,       // null → use defaults; otherwise array of strings (user-managed)
+  // ---- Second-Brain layer ----
+  inbox: [],          // { id, text, createdAt }  — fast capture; triaged later
+  projects: [],       // { id, name, goal, deadline, area, status, createdAt }
+  notes: [],          // { id, title, body, tags, linkedSymbol, createdAt, updatedAt }
+  reviews: {},        // { 'YYYY-Www': { wins, losses, lessons, nextWeek } } — weekly review
   lastSaved: null,
 });
 
@@ -49,6 +54,10 @@ function loadState() {
       if (!Array.isArray(S.skills)) S.skills = [];
       if (!Array.isArray(S.books)) S.books = [];
       if (!Array.isArray(S.plans)) S.plans = [];
+      if (!Array.isArray(S.inbox)) S.inbox = [];
+      if (!Array.isArray(S.projects)) S.projects = [];
+      if (!Array.isArray(S.notes)) S.notes = [];
+      if (!S.reviews || typeof S.reviews !== 'object') S.reviews = {};
       if (loaded.quotes !== undefined) S.quotes = loaded.quotes;
       // ---- Trade migration: old single-execution rows → new position shape ----
       if (Array.isArray(S.trades)) {
@@ -3001,7 +3010,456 @@ function renderAll() {
   renderBooks();
   renderQuotes();
   renderKPIs();
+  renderInbox();
+  renderProjects();
+  renderReview();
+  renderNotes();
 }
+
+/* ============================================================
+   SECOND-BRAIN LAYER — Inbox, Projects, Weekly Review, Notes Vault
+   Inspired by Notion's Second Brain 6.2 (PARA + GTD)
+   ============================================================ */
+
+/* ---- ISO week helpers ---- */
+function isoWeekKey(d) {
+  // Returns 'YYYY-Www' (ISO 8601 week-of-year)
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  const dayNum = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNum = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${pad(weekNum)}`;
+}
+function weekRange(weekKey) {
+  // Returns { start: Date (Mon), end: Date (Sun), label: 'Mon DD – Sun DD' }
+  const m = /^(\d{4})-W(\d{2})$/.exec(weekKey);
+  if (!m) return null;
+  const year = +m[1], week = +m[2];
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - jan4Day + 1 + (week - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  const fmt = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+  return { start: monday, end: sunday, label: `${fmt(monday)} – ${fmt(sunday)}` };
+}
+
+/* -------- INBOX (capture lane) -------- */
+function renderInbox() {
+  const list = $('#captureList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!S.inbox.length) {
+    list.innerHTML = '<div class="capture-empty">Captures route into Tasks, Ideas, Plans, or Notes.</div>';
+    return;
+  }
+  // Newest first, max 6 visible
+  S.inbox.slice().sort((a, b) => b.createdAt - a.createdAt).slice(0, 6).forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'capture-row';
+    const text = document.createElement('span');
+    text.className = 'capture-text';
+    text.textContent = item.text;
+    row.appendChild(text);
+    const acts = document.createElement('div');
+    acts.className = 'capture-actions';
+    const routes = [
+      { k: 'task', label: '→ Task' },
+      { k: 'idea', label: '→ Idea' },
+      { k: 'plan', label: '→ Plan' },
+      { k: 'note', label: '→ Note' },
+      { k: 'discard', label: '✕' },
+    ];
+    routes.forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'capture-act' + (r.k === 'discard' ? ' discard' : '');
+      b.textContent = r.label;
+      b.title = r.k === 'discard' ? 'Discard' : `Route to ${r.k}`;
+      b.addEventListener('click', () => triageInbox(item.id, r.k));
+      acts.appendChild(b);
+    });
+    row.appendChild(acts);
+    list.appendChild(row);
+  });
+  if (S.inbox.length > 6) {
+    const more = document.createElement('div');
+    more.className = 'capture-more';
+    more.textContent = `+${S.inbox.length - 6} more in inbox`;
+    list.appendChild(more);
+  }
+}
+function addInbox(text) {
+  const t = (text || '').trim();
+  if (!t) return;
+  S.inbox.push({ id: uid(), text: t, createdAt: Date.now() });
+  saveState();
+  renderInbox();
+}
+function triageInbox(id, route) {
+  const item = S.inbox.find(x => x.id === id);
+  if (!item) return;
+  if (route === 'task') {
+    addTask({ title: item.text, track: 'business', priority: 2, due: '' });
+  } else if (route === 'idea') {
+    S.notes.push({
+      id: uid(),
+      title: item.text.slice(0, 60),
+      body: item.text,
+      tags: ['idea', 'inbox'],
+      linkedSymbol: '',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    renderNotes();
+  } else if (route === 'plan') {
+    // Pre-fill battle-plan symbol field from text (first all-caps token if any)
+    const sym = (item.text.match(/[A-Z]{2,6}/) || [''])[0];
+    addPlan({ symbol: sym, market: 'stock', side: 'long', notes: item.text });
+    renderTrades();
+  } else if (route === 'note') {
+    S.notes.push({
+      id: uid(),
+      title: item.text.slice(0, 60),
+      body: item.text,
+      tags: ['note'],
+      linkedSymbol: '',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    renderNotes();
+  }
+  // Always remove from inbox after triage (or discard)
+  S.inbox = S.inbox.filter(x => x.id !== id);
+  saveState();
+  renderInbox();
+}
+function wireInbox() {
+  const inp = $('#captureInput');
+  if (!inp) return;
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addInbox(inp.value);
+      inp.value = '';
+    }
+  });
+}
+
+/* -------- PROJECTS -------- */
+function renderProjects() {
+  const list = $('#projectList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!S.projects.length) {
+    list.innerHTML = '<div class="empty-block">No projects yet. Forge one above to start grouping tasks.</div>';
+    return;
+  }
+  // Sort: active first, then by deadline
+  const sorted = S.projects.slice().sort((a, b) => {
+    if ((a.status === 'done') !== (b.status === 'done')) return a.status === 'done' ? 1 : -1;
+    return (a.deadline || 'z').localeCompare(b.deadline || 'z');
+  });
+  sorted.forEach(p => {
+    const row = document.createElement('div');
+    row.className = 'project-row' + (p.status === 'done' ? ' done' : '');
+    // Progress: % of linked tasks done
+    const linked = S.tasks.filter(t => t.projectId === p.id);
+    const doneCount = linked.filter(t => t.done).length;
+    const pct = linked.length ? Math.round((doneCount / linked.length) * 100) : 0;
+    const daysLeft = p.deadline ? Math.ceil((new Date(p.deadline) - new Date()) / 86400000) : null;
+    const dlClass = daysLeft != null ? (daysLeft < 0 ? 'overdue' : daysLeft <= 7 ? 'soon' : '') : '';
+    row.innerHTML = `
+      <div class="proj-main">
+        <div class="proj-head">
+          <span class="proj-name">${escapeHtml(p.name)}</span>
+          ${p.area ? `<span class="proj-area">${escapeHtml(p.area)}</span>` : ''}
+          ${p.deadline ? `<span class="proj-deadline ${dlClass}">${p.deadline}${daysLeft != null && daysLeft >= 0 ? ` · ${daysLeft}d` : daysLeft != null ? ` · ${-daysLeft}d overdue` : ''}</span>` : ''}
+        </div>
+        ${p.goal ? `<div class="proj-goal">${escapeHtml(p.goal)}</div>` : ''}
+        <div class="proj-progress">
+          <div class="proj-bar"><div class="proj-bar-fill" style="width:${pct}%"></div></div>
+          <span class="proj-pct">${pct}% · ${doneCount}/${linked.length} tasks</span>
+        </div>
+      </div>
+      <div class="proj-actions">
+        <button class="btn-ghost mini" data-toggle="${p.id}">${p.status === 'done' ? 'Reopen' : 'Mark done'}</button>
+        <button class="btn-ghost mini danger" data-del="${p.id}">Delete</button>
+      </div>
+    `;
+    row.querySelector(`[data-toggle="${p.id}"]`).addEventListener('click', () => {
+      p.status = p.status === 'done' ? 'active' : 'done';
+      saveState();
+      renderProjects();
+    });
+    row.querySelector(`[data-del="${p.id}"]`).addEventListener('click', () => {
+      if (!confirm(`Delete project "${p.name}"? Linked tasks stay.`)) return;
+      S.projects = S.projects.filter(x => x.id !== p.id);
+      // Detach tasks
+      S.tasks.forEach(t => { if (t.projectId === p.id) t.projectId = null; });
+      saveState();
+      renderProjects();
+      renderTracks();
+    });
+    list.appendChild(row);
+  });
+}
+function addProject(data) {
+  S.projects.push({
+    id: uid(),
+    name: data.name,
+    goal: data.goal || '',
+    deadline: data.deadline || '',
+    area: data.area || '',
+    status: 'active',
+    createdAt: Date.now(),
+  });
+  saveState();
+  renderProjects();
+}
+function wireProjects() {
+  const f = $('#projectAdd');
+  if (!f) return;
+  f.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = $('#projName').value.trim();
+    if (!name) return;
+    addProject({
+      name,
+      goal: $('#projGoal').value.trim(),
+      deadline: $('#projDeadline').value,
+      area: $('#projArea').value,
+    });
+    f.reset();
+  });
+}
+
+/* -------- WEEKLY REVIEW -------- */
+let rvOffset = 0; // 0 = current week, -1 = last week, etc.
+function currentRvWeekKey() {
+  const d = new Date();
+  d.setDate(d.getDate() + rvOffset * 7);
+  return isoWeekKey(d);
+}
+function renderReview() {
+  const wk = currentRvWeekKey();
+  const range = weekRange(wk);
+  const lbl = $('#rvWeekLabel');
+  if (lbl) lbl.textContent = range ? `${wk} · ${range.label}${rvOffset === 0 ? ' · this week' : ''}` : wk;
+  const data = S.reviews[wk] || {};
+  ['Wins', 'Losses', 'Lessons', 'Next'].forEach(k => {
+    const el = $(`#rv${k}`);
+    if (el) el.value = data[k.toLowerCase()] || '';
+  });
+  // Auto-rolled metrics: trades, win rate, avg R, habit %, tasks done
+  const rolled = $('#reviewRolled');
+  if (!rolled) return;
+  const r = computeReviewRollups(wk);
+  rolled.innerHTML = `
+    <div class="rv-stat"><div class="rv-lbl">Trades</div><div class="rv-val">${r.tradeCount}</div></div>
+    <div class="rv-stat"><div class="rv-lbl">Win rate</div><div class="rv-val">${r.winRate != null ? r.winRate + '%' : '—'}</div></div>
+    <div class="rv-stat"><div class="rv-lbl">Avg R</div><div class="rv-val ${r.avgR > 0 ? 'pos' : r.avgR < 0 ? 'neg' : ''}">${r.avgR != null ? (r.avgR > 0 ? '+' : '') + r.avgR.toFixed(2) + 'R' : '—'}</div></div>
+    <div class="rv-stat"><div class="rv-lbl">Tasks done</div><div class="rv-val">${r.tasksDone}/${r.tasksTotal}</div></div>
+    <div class="rv-stat"><div class="rv-lbl">Habit %</div><div class="rv-val">${r.habitPct}%</div></div>
+    <div class="rv-stat"><div class="rv-lbl">Journal days</div><div class="rv-val">${r.journalDays}/7</div></div>
+  `;
+}
+function computeReviewRollups(weekKey) {
+  const range = weekRange(weekKey);
+  const out = { tradeCount: 0, winRate: null, avgR: null, tasksDone: 0, tasksTotal: 0, habitPct: 0, journalDays: 0 };
+  if (!range) return out;
+  const start = range.start.getTime();
+  const end = range.end.getTime() + 86400000; // include Sunday
+  // Closed trades whose last execution falls in the week
+  const closedThisWeek = (S.trades || []).filter(p => p.status === 'closed' && (p.executions || []).length).filter(p => {
+    const last = p.executions.slice().sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1).pop();
+    if (!last || !last.date) return false;
+    const t = new Date(last.date).getTime();
+    return t >= start && t < end;
+  });
+  out.tradeCount = closedThisWeek.length;
+  if (closedThisWeek.length) {
+    let wins = 0, rSum = 0, rN = 0;
+    closedThisWeek.forEach(p => {
+      const m = posMetrics(p);
+      if (m.realized > 0) wins++;
+      if (m.R != null && isFinite(m.R)) { rSum += m.R; rN++; }
+    });
+    out.winRate = Math.round((wins / closedThisWeek.length) * 100);
+    out.avgR = rN ? rSum / rN : null;
+  }
+  // Tasks: done flag + due-or-created within week (best-effort)
+  const taskInWeek = (S.tasks || []).filter(t => {
+    const ref = t.due ? new Date(t.due).getTime() : t.createdAt;
+    return ref >= start && ref < end;
+  });
+  out.tasksTotal = taskInWeek.length;
+  out.tasksDone = taskInWeek.filter(t => t.done).length;
+  // Habits: total possible ticks over 7 days
+  const dayKeys = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(range.start);
+    d.setUTCDate(d.getUTCDate() + i);
+    dayKeys.push(`${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`);
+  }
+  if (S.habits.length) {
+    let hits = 0, total = 0;
+    S.habits.forEach(h => {
+      dayKeys.forEach(dk => {
+        total++;
+        if (h.log && h.log[dk]) hits++;
+      });
+    });
+    out.habitPct = total ? Math.round((hits / total) * 100) : 0;
+  }
+  // Journal: count days with any entry text
+  out.journalDays = dayKeys.filter(dk => {
+    const e = S.journals[dk] || {};
+    return (e.wins || e.lessons || e.tomorrow || '').trim().length > 0;
+  }).length;
+  return out;
+}
+function wireReview() {
+  ['Wins', 'Losses', 'Lessons', 'Next'].forEach(k => {
+    const el = $(`#rv${k}`);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      const wk = currentRvWeekKey();
+      if (!S.reviews[wk]) S.reviews[wk] = {};
+      S.reviews[wk][k.toLowerCase()] = el.value;
+      saveState();
+    });
+  });
+  const prev = $('#rvPrev'), next = $('#rvNext');
+  if (prev) prev.addEventListener('click', () => { rvOffset--; renderReview(); });
+  if (next) next.addEventListener('click', () => { if (rvOffset < 0) { rvOffset++; renderReview(); } });
+  const carry = $('#rvCarryBtn');
+  if (carry) carry.addEventListener('click', () => {
+    const next = $('#rvNext').value || '';
+    const lines = next.split('\n').map(s => s.trim()).filter(Boolean);
+    if (!lines.length) { alert('Write at least one line in "Next week" first.'); return; }
+    if (!confirm(`Convert ${lines.length} line(s) into tasks (track: business, priority: high)?`)) return;
+    lines.forEach(line => addTask({ title: line, track: 'business', priority: 1, due: '' }));
+    alert(`${lines.length} task(s) added. Find them in Task tracks.`);
+  });
+}
+
+/* -------- NOTES VAULT -------- */
+let notesQuery = '';
+function renderNotes() {
+  const list = $('#notesList');
+  if (!list) return;
+  list.innerHTML = '';
+  const q = notesQuery.toLowerCase();
+  const matches = S.notes.filter(n => {
+    if (!q) return true;
+    return (n.title + ' ' + n.body + ' ' + (n.tags || []).join(' ') + ' ' + (n.linkedSymbol || '')).toLowerCase().includes(q);
+  }).sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+  if (!matches.length) {
+    list.innerHTML = `<div class="empty-block">${q ? 'No notes match "' + escapeHtml(q) + '".' : 'No notes yet. Inscribe your first thesis.'}</div>`;
+    return;
+  }
+  matches.forEach(n => {
+    const card = document.createElement('div');
+    card.className = 'note-card';
+    const tagsHtml = (n.tags || []).map(t => `<span class="note-tag">${escapeHtml(t)}</span>`).join('');
+    const dateStr = new Date(n.updatedAt || n.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    card.innerHTML = `
+      <div class="note-head">
+        <div class="note-title">${escapeHtml(n.title)}</div>
+        <div class="note-meta">
+          ${n.linkedSymbol ? `<span class="note-symbol">${escapeHtml(n.linkedSymbol)}</span>` : ''}
+          <span class="note-date">${dateStr}</span>
+          <button class="note-del" data-del="${n.id}" title="Delete">✕</button>
+        </div>
+      </div>
+      <div class="note-body">${escapeHtml(n.body).replace(/\n/g, '<br>')}</div>
+      ${tagsHtml ? `<div class="note-tags">${tagsHtml}</div>` : ''}
+    `;
+    card.querySelector(`[data-del="${n.id}"]`).addEventListener('click', () => {
+      if (!confirm('Delete this note?')) return;
+      S.notes = S.notes.filter(x => x.id !== n.id);
+      saveState();
+      renderNotes();
+    });
+    list.appendChild(card);
+  });
+}
+function addNote(data) {
+  S.notes.push({
+    id: uid(),
+    title: data.title,
+    body: data.body,
+    tags: (data.tags || '').split(',').map(s => s.trim()).filter(Boolean),
+    linkedSymbol: (data.linkedSymbol || '').trim().toUpperCase(),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  saveState();
+  renderNotes();
+}
+function wireNotes() {
+  const f = $('#noteAdd');
+  if (!f) return;
+  f.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = $('#noteTitle').value.trim();
+    const body = $('#noteBody').value.trim();
+    if (!title || !body) return;
+    addNote({
+      title,
+      body,
+      tags: $('#noteTags').value,
+      linkedSymbol: $('#noteSymbol').value,
+    });
+    f.reset();
+  });
+  const search = $('#notesSearch');
+  if (search) search.addEventListener('input', () => {
+    notesQuery = search.value.trim();
+    renderNotes();
+  });
+}
+
+/* -------- QUICK-ACTION TOOLBAR -------- */
+function wireQuickActions() {
+  $$('.qa-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.qa;
+      const targets = {
+        task:    '#taskTitle',
+        plan:    '#plSymbol',
+        habit:   '#habitName',
+        journal: '[data-j="wins"]',
+        idea:    '#noteTitle',
+        reading: '#bookTitle',
+      };
+      const sel = targets[action];
+      if (!sel) return;
+      const el = document.querySelector(sel);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Switch trade tab if needed
+      if (action === 'plan') {
+        const planTab = document.querySelector('[data-trade-tab="plan"]');
+        if (planTab) planTab.click();
+      }
+      setTimeout(() => { try { el.focus(); } catch (e) {} }, 400);
+    });
+  });
+}
+
+/* -------- HTML escape helper -------- */
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 
 // ---------------- Init ----------------
 function init() {
@@ -3012,6 +3470,11 @@ function init() {
   wireSkills();
   wireBooks();
   wireQuotes();
+  wireInbox();
+  wireProjects();
+  wireReview();
+  wireNotes();
+  wireQuickActions();
   setQuote();
   renderAll();
   tick();
