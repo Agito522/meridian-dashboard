@@ -11,7 +11,7 @@ const STORE_KEY = 'meridian_v1';
 
 const defaultState = () => ({
   intention: '',
-  tasks: [],          // { id, title, track, priority, due, done, quad, createdAt }
+  tasks: [],          // { id, title, track, priority, due, done, quad, skillId, createdAt }
   habits: [],         // { id, name, log: { 'YYYY-MM-DD': true } }
   reminders: [],      // { id, text, time }
   trades: [],         // expanded — see addTrade()
@@ -24,6 +24,9 @@ const defaultState = () => ({
   streak: { count: 0, lastActive: null },
   handbook: { lastIndex: null, check: {} },
   subs: { items: [], baseCurrency: 'USD' },
+  skills: [],         // { id, name, category, level (0-5), note, createdAt }
+  books: [],          // { id, title, author, status, progress, started, finished, rating, notes }
+  quotes: null,       // null → use defaults; otherwise array of strings (user-managed)
   lastSaved: null,
 });
 
@@ -41,6 +44,9 @@ function loadState() {
       S.handbook = { ...defaultState().handbook, ...(loaded.handbook || {}) };
       S.subs = { ...defaultState().subs, ...(loaded.subs || {}) };
       if (!Array.isArray(S.subs.items)) S.subs.items = [];
+      if (!Array.isArray(S.skills)) S.skills = [];
+      if (!Array.isArray(S.books)) S.books = [];
+      if (loaded.quotes !== undefined) S.quotes = loaded.quotes;
     }
   } catch (e) { /* storage unavailable — fall back to in-memory */ }
 }
@@ -69,13 +75,16 @@ const dateKey = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDat
 const sameDate = (a, b) => dateKey(a) === dateKey(b);
 
 // ---------------- Tracks config ----------------
+// Diablo-style icons: each track has an item-rarity tier (legendary/rare/magic/common)
 const TRACKS = [
-  { id: 'trading',    label: 'Trading prep',    icon: '₿',  blurb: 'Market research, watchlists, journaling' },
-  { id: 'learning',   label: 'Online learning', icon: '◆',  blurb: 'ESG · tarot · cyber · certifications' },
-  { id: 'health',     label: 'Health',          icon: '♡',  blurb: 'Movement, sleep, mindfulness' },
-  { id: 'reading',    label: 'Reading',         icon: '❦',  blurb: 'Books, research, deep focus' },
-  { id: 'linkedin',   label: 'LinkedIn',        icon: '◈',  blurb: 'Profile, content, visibility' },
-  { id: 'networking', label: 'Networking',      icon: '✷',  blurb: 'Outreach, coffee chats, follow-ups' },
+  { id: 'trading',    label: 'Trading prep',    icon: '⚔',  blurb: 'Market research, watchlists, journaling',  tier: 'legendary' },
+  { id: 'wealth',     label: 'Wealth',          icon: '◈',  blurb: 'Net worth, savings, financial planning',    tier: 'legendary' },
+  { id: 'learning',   label: 'Online learning', icon: '⌬',  blurb: 'ESG · tarot · cyber · certifications',     tier: 'rare' },
+  { id: 'health',     label: 'Health',          icon: '♥',  blurb: 'Movement, sleep, mindfulness',              tier: 'rare' },
+  { id: 'reading',    label: 'Reading',         icon: '❦',  blurb: 'Books, research, deep focus',               tier: 'magic' },
+  { id: 'linkedin',   label: 'LinkedIn',        icon: '◆',  blurb: 'Profile, content, visibility',              tier: 'magic' },
+  { id: 'networking', label: 'Networking',      icon: '✷',  blurb: 'Outreach, coffee chats, follow-ups',        tier: 'magic' },
+  { id: 'hobby',      label: 'Hobby',           icon: '✦',  blurb: 'Creative pursuits, play, joy',              tier: 'common' },
 ];
 const trackMeta = (id) => TRACKS.find(t => t.id === id) || TRACKS[0];
 
@@ -280,6 +289,7 @@ function filterTasks(list) {
 }
 
 function renderTaskCard(t) {
+  const skill = t.skillId ? S.skills.find(s => s.id === t.skillId) : null;
   const el = h('div', {
     class: `task ${t.done ? 'done' : ''}`,
     draggable: 'true',
@@ -295,6 +305,7 @@ function renderTaskCard(t) {
       h('div', { class: 'task-meta' },
         h('span', { class: `task-prio p${t.priority}` }, `P${t.priority}`),
         t.due ? h('span', {}, relDate(t.due)) : null,
+        skill ? h('span', { class: 'task-skill', title: 'Linked skill' }, '◈ ' + skill.name) : null,
       )
     ),
     h('button', { class: 'task-del', onClick: (e) => { e.stopPropagation(); deleteTask(t.id); } }, '✕')
@@ -329,12 +340,14 @@ function addTask(data) {
     track: data.track,
     priority: +data.priority,
     due: data.due || null,
+    skillId: data.skillId || null,
     done: false,
     quad: null,
     createdAt: Date.now(),
   });
   saveState();
   renderTracks();
+  renderSkills();
 }
 
 function toggleTask(id) {
@@ -344,12 +357,14 @@ function toggleTask(id) {
   if (t.done) bumpStreak();
   saveState();
   renderTracks();
+  renderSkills();
 }
 
 function deleteTask(id) {
   S.tasks = S.tasks.filter(t => t.id !== id);
   saveState();
   renderTracks();
+  renderSkills();
 }
 
 function bumpStreak() {
@@ -1196,12 +1211,14 @@ function getTrackColors() {
   const cs = getComputedStyle(document.documentElement);
   const get = (n) => cs.getPropertyValue(n).trim();
   return {
-    trading: get('--primary'),
+    trading: get('--primary'),                  // gold/legendary
+    wealth: get('--rarity-legendary') || get('--primary'),
     learning: get('--accent'),
     health: get('--success'),
     reading: get('--warn'),
     linkedin: get('--info'),
     networking: get('--danger'),
+    hobby: get('--rarity-magic') || get('--info'),
     soft: get('--surface-offset'),
     primary: get('--primary'),
     text: get('--text'),
@@ -1661,7 +1678,7 @@ function wireSubscriptions() {
 }
 
 // ---------------- Quotes ----------------
-const quotes = [
+const DEFAULT_QUOTES = [
   'Discipline is freedom. — Aristotle',
   'Patience and discipline — the edge compounds silently.',
   'Don\'t find customers for your products, find products for your customers. — Seth Godin',
@@ -1674,10 +1691,332 @@ const quotes = [
   'Cut your losses short and let your profits run. — David Ricardo',
 ];
 
-function setQuote() {
-  const day = new Date().getDate();
-  $('#footerQuote').textContent = quotes[day % quotes.length];
+function getQuotes() {
+  return Array.isArray(S.quotes) && S.quotes.length ? S.quotes : DEFAULT_QUOTES;
 }
+
+function pickQuoteForToday() {
+  const list = getQuotes();
+  if (!list.length) return '—';
+  const day = new Date().getDate();
+  return list[day % list.length];
+}
+
+function setQuote() {
+  const text = pickQuoteForToday();
+  const footer = $('#footerQuote'); if (footer) footer.textContent = text;
+  const today = $('#quoteToday'); if (today) today.textContent = text;
+}
+
+function renderQuotes() {
+  setQuote();
+  const list = $('#quotesList');
+  if (!list) return;
+  list.innerHTML = '';
+  const quotes = getQuotes();
+  $('#quotesCount').textContent = quotes.length;
+  const todayIdx = new Date().getDate() % quotes.length;
+  if (S.quotes === null) {
+    list.appendChild(h('div', { class: 'quotes-hint' }, 'Showing the default mantras. Add or remove any to start your own rotation.'));
+  }
+  quotes.forEach((q, i) => {
+    const isToday = i === todayIdx;
+    const row = h('div', { class: 'quote-row' + (isToday ? ' today' : '') },
+      h('span', { class: 'quote-rune' }, isToday ? '❁' : '•'),
+      h('div', { class: 'quote-text', contenteditable: 'true', spellcheck: 'false', onBlur: (e) => editQuote(i, e.target.textContent.trim()) }, q),
+      h('button', { class: 'quote-del', title: 'Remove', onClick: () => deleteQuote(i) }, '✕'),
+    );
+    list.appendChild(row);
+  });
+}
+
+function ensureCustomQuotes() {
+  if (!Array.isArray(S.quotes)) S.quotes = DEFAULT_QUOTES.slice();
+}
+
+function addQuote(text) {
+  if (!text) return;
+  ensureCustomQuotes();
+  S.quotes.push(text);
+  saveState();
+  renderQuotes();
+}
+function editQuote(i, text) {
+  ensureCustomQuotes();
+  if (!text) { S.quotes.splice(i, 1); }
+  else { S.quotes[i] = text; }
+  saveState();
+  renderQuotes();
+}
+function deleteQuote(i) {
+  ensureCustomQuotes();
+  S.quotes.splice(i, 1);
+  saveState();
+  renderQuotes();
+}
+function restoreDefaultQuotes() {
+  S.quotes = null;
+  saveState();
+  renderQuotes();
+}
+
+function wireQuotes() {
+  const form = $('#quoteAdd');
+  if (!form) return;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const inp = $('#quoteText');
+    const text = inp.value.trim();
+    if (!text) return;
+    addQuote(text);
+    inp.value = '';
+  });
+  const reset = $('#quotesReset');
+  if (reset) reset.addEventListener('click', () => {
+    if (confirm('Restore the default mantras? Your custom additions will be cleared.')) restoreDefaultQuotes();
+  });
+}
+
+// ---------------- Skills (Codex) ----------------
+const SKILL_CATEGORY_LABEL = {
+  finance: 'Finance',
+  tech: 'Tech',
+  business: 'Business',
+  creative: 'Creative',
+  wellness: 'Wellness',
+  language: 'Language',
+  other: 'Other',
+};
+const SKILL_LEVEL_LABEL = ['Untrained', 'Apprentice', 'Journeyman', 'Adept', 'Master', 'Grandmaster'];
+
+function renderSkillTaskOption() {
+  const sel = $('#taskSkill');
+  if (!sel) return;
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— No skill —</option>';
+  S.skills.slice().sort((a,b) => a.name.localeCompare(b.name)).forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = `◈ ${s.name}`;
+    sel.appendChild(opt);
+  });
+  if (current) sel.value = current;
+}
+
+function skillXp(skillId) {
+  return S.tasks.filter(t => t.skillId === skillId && t.done).length;
+}
+
+function renderSkills() {
+  renderSkillTaskOption();
+  const grid = $('#skillsGrid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  $('#skillsCount').textContent = S.skills.length;
+  let totalXp = 0;
+  if (S.skills.length === 0) {
+    grid.appendChild(h('div', { class: 'skills-empty' },
+      'No skills inscribed yet. Add skills like Accounting, ESG, AI Agent, Cybersecurity, or Tarot — then link tasks to them to track XP.'));
+    $('#skillsXp').textContent = 0;
+    return;
+  }
+  const sorted = S.skills.slice().sort((a,b) => skillXp(b.id) - skillXp(a.id) || (b.level||0) - (a.level||0));
+  sorted.forEach(s => {
+    const xp = skillXp(s.id);
+    totalXp += xp;
+    const linked = S.tasks.filter(t => t.skillId === s.id).length;
+    const card = h('div', { class: `skill-card cat-${s.category||'other'}`, data: { id: s.id } },
+      h('div', { class: 'skill-head' },
+        h('div', { class: 'skill-name' }, s.name),
+        h('button', { class: 'skill-del', title: 'Remove', onClick: () => deleteSkill(s.id) }, '✕')
+      ),
+      h('div', { class: 'skill-meta' },
+        h('span', { class: 'skill-cat' }, SKILL_CATEGORY_LABEL[s.category] || 'Other'),
+        h('span', { class: 'skill-level', data: { level: s.level || 0 } },
+          ...Array.from({ length: 5 }, (_, i) => h('span', { class: 'pip' + (i < (s.level||0) ? ' on' : '') })),
+          h('span', { class: 'lvl-text' }, SKILL_LEVEL_LABEL[s.level || 0])
+        )
+      ),
+      h('div', { class: 'skill-xp' },
+        h('span', { class: 'xp-num' }, String(xp)),
+        h('span', { class: 'xp-label' }, 'XP'),
+        h('span', { class: 'xp-sub' }, `· ${linked} task${linked===1?'':'s'} linked`)
+      ),
+      s.note ? h('div', { class: 'skill-note' }, s.note) : null,
+      h('div', { class: 'skill-actions' },
+        h('button', { class: 'btn-ghost btn-tiny', onClick: () => bumpSkillLevel(s.id, -1) }, '−'),
+        h('button', { class: 'btn-ghost btn-tiny', onClick: () => bumpSkillLevel(s.id, +1) }, '+'),
+      )
+    );
+    grid.appendChild(card);
+  });
+  $('#skillsXp').textContent = totalXp;
+}
+
+function addSkill(data) {
+  S.skills.push({
+    id: 'sk_' + uid(),
+    name: data.name.trim(),
+    category: data.category || 'other',
+    level: parseInt(data.level || 1, 10),
+    note: (data.note || '').trim(),
+    createdAt: Date.now(),
+  });
+  saveState();
+  renderSkills();
+}
+function deleteSkill(id) {
+  if (!confirm('Remove this skill? Tasks linked to it will become unlinked.')) return;
+  S.skills = S.skills.filter(s => s.id !== id);
+  S.tasks.forEach(t => { if (t.skillId === id) t.skillId = null; });
+  saveState();
+  renderSkills();
+  renderTracks();
+}
+function bumpSkillLevel(id, delta) {
+  const s = S.skills.find(x => x.id === id);
+  if (!s) return;
+  s.level = Math.max(0, Math.min(5, (s.level || 0) + delta));
+  saveState();
+  renderSkills();
+}
+function wireSkills() {
+  const form = $('#skillAdd');
+  if (!form) return;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const name = $('#skillName').value.trim();
+    if (!name) return;
+    addSkill({
+      name,
+      category: $('#skillCategory').value,
+      level: $('#skillLevel').value,
+      note: $('#skillNote').value,
+    });
+    $('#skillName').value = '';
+    $('#skillNote').value = '';
+  });
+}
+
+// ---------------- Reading list (Tome) ----------------
+let bookFilter = 'all';
+const BOOK_STATUS_LABEL = { queue: 'Queue', reading: 'Reading', done: 'Conquered' };
+
+function renderBooks() {
+  const list = $('#booksList');
+  if (!list) return;
+  list.innerHTML = '';
+  const counts = { reading: 0, queue: 0, done: 0 };
+  S.books.forEach(b => { counts[b.status] = (counts[b.status] || 0) + 1; });
+  $('#booksReading').textContent = counts.reading || 0;
+  $('#booksQueue').textContent = counts.queue || 0;
+  $('#booksDone').textContent = counts.done || 0;
+
+  let items = S.books.slice();
+  if (bookFilter !== 'all') items = items.filter(b => b.status === bookFilter);
+  // sort: reading > queue > done; within each by createdAt desc
+  const order = { reading: 0, queue: 1, done: 2 };
+  items.sort((a, b) => (order[a.status] - order[b.status]) || (b.createdAt - a.createdAt));
+
+  if (items.length === 0) {
+    list.appendChild(h('div', { class: 'books-empty' }, 'No books here yet — add one above to begin the tome.'));
+    return;
+  }
+  items.forEach(b => list.appendChild(renderBookRow(b)));
+}
+function renderBookRow(b) {
+  const progress = Math.max(0, Math.min(100, parseInt(b.progress || 0, 10)));
+  const stars = '✯'.repeat(Math.max(0, Math.min(5, parseInt(b.rating || 0, 10))));
+  return h('div', { class: `book-row status-${b.status}`, data: { id: b.id } },
+    h('div', { class: 'book-cover' }, h('span', { class: 'book-glyph' }, b.title.charAt(0).toUpperCase() || '❦')),
+    h('div', { class: 'book-main' },
+      h('div', { class: 'book-title' }, b.title),
+      h('div', { class: 'book-author' }, b.author || 'Unknown author'),
+      h('div', { class: 'book-progress' },
+        h('div', { class: 'bp-bar' }, h('div', { class: 'bp-fill', style: `width: ${progress}%` })),
+        h('span', { class: 'bp-pct' }, progress + '%')
+      ),
+      b.notes ? h('div', { class: 'book-notes' }, b.notes) : null
+    ),
+    h('div', { class: 'book-side' },
+      h('select', { class: 'book-status-sel', onChange: (e) => updateBook(b.id, { status: e.target.value }) },
+        ...['queue','reading','done'].map(v => {
+          const o = document.createElement('option');
+          o.value = v; o.textContent = BOOK_STATUS_LABEL[v];
+          if (v === b.status) o.selected = true;
+          return o;
+        })
+      ),
+      stars ? h('div', { class: 'book-rating' }, stars) : null,
+      h('div', { class: 'book-dates' },
+        b.started ? h('span', {}, 'started ' + b.started) : null,
+        b.finished ? h('span', {}, 'finished ' + b.finished) : null,
+      ),
+      h('button', { class: 'book-del', title: 'Remove', onClick: () => deleteBook(b.id) }, '✕')
+    )
+  );
+}
+function addBook(data) {
+  const today = todayKey();
+  S.books.push({
+    id: 'bk_' + uid(),
+    title: data.title.trim(),
+    author: (data.author || '').trim(),
+    status: data.status || 'queue',
+    progress: parseInt(data.progress || 0, 10) || 0,
+    rating: parseInt(data.rating || 0, 10) || 0,
+    started: data.status === 'reading' ? today : null,
+    finished: data.status === 'done' ? today : null,
+    notes: '',
+    createdAt: Date.now(),
+  });
+  saveState();
+  renderBooks();
+}
+function updateBook(id, patch) {
+  const b = S.books.find(x => x.id === id);
+  if (!b) return;
+  Object.assign(b, patch);
+  // Auto-set dates on status change
+  if (patch.status === 'reading' && !b.started) b.started = todayKey();
+  if (patch.status === 'done' && !b.finished) { b.finished = todayKey(); b.progress = 100; }
+  saveState();
+  renderBooks();
+}
+function deleteBook(id) {
+  S.books = S.books.filter(b => b.id !== id);
+  saveState();
+  renderBooks();
+}
+function wireBooks() {
+  const form = $('#bookAdd');
+  if (!form) return;
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const title = $('#bookTitle').value.trim();
+    if (!title) return;
+    addBook({
+      title,
+      author: $('#bookAuthor').value,
+      status: $('#bookStatus').value,
+      progress: $('#bookProgress').value,
+      rating: $('#bookRating').value,
+    });
+    $('#bookTitle').value = '';
+    $('#bookAuthor').value = '';
+    $('#bookProgress').value = '';
+    $('#bookRating').value = '';
+  });
+  $$('[data-book-filter]').forEach(p => {
+    p.addEventListener('click', () => {
+      $$('[data-book-filter]').forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      bookFilter = p.dataset.bookFilter;
+      renderBooks();
+    });
+  });
+}
+
 
 // ---------------- Import / Export / Reset ----------------
 function exportJSON() {
@@ -1742,14 +2081,17 @@ function wireEvents() {
     e.preventDefault();
     const title = $('#taskTitle').value.trim();
     if (!title) return;
+    const skillSel = $('#taskSkill');
     addTask({
       title,
       track: $('#taskTrack').value,
       priority: $('#taskPriority').value,
       due: $('#taskDue').value,
+      skillId: skillSel ? (skillSel.value || null) : null,
     });
     $('#taskTitle').value = '';
     $('#taskDue').value = '';
+    if (skillSel) skillSel.value = '';
   });
 
   // Matrix
@@ -1913,6 +2255,9 @@ function renderAll() {
   renderTrades();
   renderEquity();
   renderSubscriptions();
+  renderSkills();
+  renderBooks();
+  renderQuotes();
   renderKPIs();
 }
 
@@ -1922,6 +2267,9 @@ function init() {
   wireEvents();
   wireHandbook();
   wireSubscriptions();
+  wireSkills();
+  wireBooks();
+  wireQuotes();
   setQuote();
   renderAll();
   tick();
