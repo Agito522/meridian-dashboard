@@ -1228,19 +1228,59 @@ function getTrackColors() {
 
 // ---------------- Theme toggle ----------------
 function initTheme() {
-  const saved = 'dark';
-  document.documentElement.setAttribute('data-theme', saved);
+  const savedTheme = (function () {
+    try { return localStorage.getItem('meridian_theme') || 'dark'; } catch (_) { return 'dark'; }
+  })();
+  document.documentElement.setAttribute('data-theme', savedTheme);
   const btn = $('[data-theme-toggle]');
+  const setIcon = (mode) => {
+    btn.innerHTML = mode === 'dark'
+      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
+  };
+  setIcon(savedTheme);
   btn.addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
-    btn.innerHTML = next === 'dark'
-      ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
-      : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
+    try { localStorage.setItem('meridian_theme', next); } catch (_) {}
+    setIcon(next);
     // Redraw charts with theme colors
     renderKPIs();
     renderEquity();
+  });
+}
+
+// ---------------- Skin picker (Diablo / D&D / Castlevania) ----------------
+function initSkin() {
+  const VALID = ['diablo', 'dnd', 'castlevania'];
+  const saved = (function () {
+    try {
+      const s = localStorage.getItem('meridian_skin');
+      return VALID.indexOf(s) >= 0 ? s : 'diablo';
+    } catch (_) { return 'diablo'; }
+  })();
+  const apply = (skin) => {
+    if (skin === 'diablo') {
+      document.documentElement.removeAttribute('data-skin');
+    } else {
+      document.documentElement.setAttribute('data-skin', skin);
+    }
+    $$('.skin-opt').forEach(b => {
+      const on = b.dataset.skinOpt === skin;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    try { localStorage.setItem('meridian_skin', skin); } catch (_) {}
+    // Redraw color-dependent charts
+    if (typeof renderKPIs === 'function') renderKPIs();
+    if (typeof renderEquity === 'function') renderEquity();
+    if (typeof renderTracks === 'function') renderTracks();
+    if (typeof renderSkills === 'function') renderSkills();
+  };
+  apply(saved);
+  $$('.skin-opt').forEach(b => {
+    b.addEventListener('click', () => apply(b.dataset.skinOpt));
   });
 }
 
@@ -2051,8 +2091,9 @@ function resetAll() {
 
 // ---------------- Wiring ----------------
 function wireEvents() {
-  // Theme
+  // Theme + Skin
   initTheme();
+  initSkin();
 
   // Intention
   const intEl = $('#intention');

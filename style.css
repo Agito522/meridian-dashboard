@@ -149,14 +149,14 @@ body {
   color: var(--text);
   background: var(--bg);
   background-image:
-    /* hellfire glow top-left */
-    radial-gradient(ellipse 800px 600px at 15% -5%, rgba(200, 65, 42, 0.18) 0%, transparent 55%),
-    /* forge glow bottom-right */
-    radial-gradient(ellipse 700px 500px at 95% 105%, rgba(232, 179, 71, 0.10) 0%, transparent 55%),
-    /* center darkening */
+    /* glow top-left */
+    radial-gradient(ellipse 800px 600px at 15% -5%, var(--glow-top, rgba(200, 65, 42, 0.18)) 0%, transparent 55%),
+    /* glow bottom-right */
+    radial-gradient(ellipse 700px 500px at 95% 105%, var(--glow-bottom, rgba(232, 179, 71, 0.10)) 0%, transparent 55%),
+    /* center vignette */
     radial-gradient(ellipse at center, transparent 0%, rgba(0, 0, 0, 0.35) 100%),
     /* parchment / stone noise */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55 0 0 0 0 0.4 0 0 0 0 0.2 0 0 0 0.07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+    var(--noise-image, url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.55 0 0 0 0 0.4 0 0 0 0 0.2 0 0 0 0.07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"));
   background-attachment: fixed;
   background-size: auto, auto, auto, 240px 240px;
   transition: background var(--transition), color var(--transition);
@@ -2604,3 +2604,255 @@ input:focus, select:focus, textarea:focus {
 .quotes-list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--primary) 40%, transparent); border-radius: 3px; }
 .quotes-list::-webkit-scrollbar-thumb:hover { background: var(--primary); }
 
+
+/* ============================================================
+   SKIN SYSTEM — three swappable themes
+   data-skin="diablo" (default, current)  ·  "dnd"  ·  "castlevania"
+   Each skin still has light + dark via [data-theme]
+   ============================================================ */
+
+/* ---------- D&D — adventurer's tome ----------
+   Aged parchment, scholarly serif, deep maroon (D&D red),
+   ink-black text, brass gold accents. */
+[data-skin="dnd"] {
+  --font-display: 'IM Fell English SC', 'Cormorant Garamond', Georgia, serif;
+  --font-script:  'IM Fell English', 'Cormorant Garamond', Georgia, serif;
+  /* Body uses the same Inter for readability */
+}
+
+[data-skin="dnd"][data-theme="light"],
+[data-skin="dnd"]:not([data-theme="dark"]) {
+  --bg: #ece2c8;                       /* aged parchment */
+  --surface: #f3ead2;
+  --surface-2: #f8f0d8;
+  --surface-offset: #e3d6b6;
+  --border: #b89968;
+  --divider: #cbb589;
+
+  --text: #2b1d10;                     /* iron-gall ink */
+  --text-muted: #6b5232;
+  --text-faint: #998060;
+  --text-inverse: #f8f0d8;
+
+  --primary: #8a1a1a;                  /* D&D red — Player's Handbook crimson */
+  --primary-soft: #f0d9c0;
+  --primary-hover: #a92424;
+  --primary-tint: rgba(138, 26, 26, 0.10);
+
+  --accent: #b8862b;                   /* brass gold leaf */
+  --accent-soft: #ecdca8;
+
+  --success: #4a6b1f;
+  --success-soft: #d8e4bd;
+  --danger:  #8a1a1a;
+  --danger-soft: #f0d0c8;
+  --warn:    #b3711c;
+  --warn-soft: #f1ddb6;
+  --info:    #2c4a78;
+  --info-soft: #cfdbe9;
+
+  --peak-bg: #f0d9c0;
+  --peak-text: #8a1a1a;
+  --market-bg: #ecdca8;
+  --market-text: #6f4f12;
+  --rest-bg: #e3d6b6;
+  --rest-text: #6b5232;
+
+  --shadow-sm: 0 1px 2px rgba(80, 50, 20, 0.18);
+  --shadow-md: 0 4px 14px rgba(80, 50, 20, 0.22);
+  --shadow-lg: 0 18px 50px rgba(80, 50, 20, 0.28);
+
+  /* Subtle ink/parchment glow */
+  --glow-top: rgba(138, 26, 26, 0.08);
+  --glow-bottom: rgba(184, 134, 43, 0.10);
+  --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.7' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.4 0 0 0 0 0.28 0 0 0 0 0.12 0 0 0 0.08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+[data-skin="dnd"][data-theme="dark"] {
+  --bg: #1a120a;                       /* candlelit tavern */
+  --surface: #251a10;
+  --surface-2: #2f2114;
+  --surface-offset: #1f1409;
+  --border: #5c3f1f;
+  --divider: #432d17;
+
+  --text: #e9d6a8;                     /* candle-glow parchment */
+  --text-muted: #a08660;
+  --text-faint: #6b5538;
+  --text-inverse: #1a120a;
+
+  --primary: #c8302e;                  /* fire-lit D&D red */
+  --primary-soft: #3d100e;
+  --primary-hover: #e64a48;
+  --primary-tint: rgba(200, 48, 46, 0.16);
+
+  --accent: #d4a73a;                   /* burnished brass */
+  --accent-soft: #3a2a08;
+
+  --success: #88a64a;
+  --success-soft: #1d2810;
+  --danger:  #d4423a;
+  --danger-soft: #3d0e0a;
+  --warn:    #d4892a;
+  --warn-soft: #3a230a;
+  --info:    #6c95cc;
+  --info-soft: #16213a;
+
+  --peak-bg: #3a2a08;
+  --peak-text: #f0c452;
+  --market-bg: #3d100e;
+  --market-text: #f17e7a;
+  --rest-bg: #1f1409;
+  --rest-text: #a08660;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.7);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.72);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.85), 0 0 80px rgba(200, 48, 46, 0.10);
+
+  --glow-top: rgba(200, 48, 46, 0.14);
+  --glow-bottom: rgba(212, 167, 58, 0.10);
+}
+
+/* ---------- Castlevania — gothic horror ----------
+   Blood crimson on midnight purple-black, silvered moonlight,
+   baroque ornament. UnifrakturCook + Italianno pairing. */
+[data-skin="castlevania"] {
+  --font-display: 'UnifrakturCook', 'Cinzel Decorative', Georgia, serif;
+  --font-script:  'Italianno', 'UnifrakturCook', Georgia, serif;
+}
+
+[data-skin="castlevania"][data-theme="light"],
+[data-skin="castlevania"]:not([data-theme="dark"]) {
+  /* "Light" = dusk over the castle, never truly bright */
+  --bg: #1c1320;                       /* twilight violet */
+  --surface: #2a1d30;
+  --surface-2: #34253b;
+  --surface-offset: #221729;
+  --border: #5d3a78;
+  --divider: #432a55;
+
+  --text: #e8dceb;                     /* moonlight on stone */
+  --text-muted: #9d80b0;
+  --text-faint: #6e547f;
+  --text-inverse: #1c1320;
+
+  --primary: #b81f3a;                  /* blood crimson */
+  --primary-soft: #3a0a13;
+  --primary-hover: #d6324d;
+  --primary-tint: rgba(184, 31, 58, 0.18);
+
+  --accent: #c9b6e0;                   /* silvered moonlight */
+  --accent-soft: #2c1a3c;
+
+  --success: #79a86b;
+  --success-soft: #1d2a18;
+  --danger:  #d63247;
+  --danger-soft: #3a0a13;
+  --warn:    #c9892e;
+  --warn-soft: #34230c;
+  --info:    #8a72c4;
+  --info-soft: #1f1730;
+
+  --peak-bg: #34253b;
+  --peak-text: #c9b6e0;
+  --market-bg: #3a0a13;
+  --market-text: #f17080;
+  --rest-bg: #221729;
+  --rest-text: #9d80b0;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 80px rgba(184, 31, 58, 0.12);
+
+  --glow-top: rgba(184, 31, 58, 0.20);
+  --glow-bottom: rgba(138, 114, 196, 0.12);
+  --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.75' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.35 0 0 0 0 0.25 0 0 0 0 0.45 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+[data-skin="castlevania"][data-theme="dark"] {
+  --bg: #0a060d;                       /* deepest castle night */
+  --surface: #14091a;
+  --surface-2: #1d1024;
+  --surface-offset: #0e0612;
+  --border: #4a2a68;
+  --divider: #2e1942;
+
+  --text: #ddc8e3;
+  --text-muted: #8b6fa0;
+  --text-faint: #5a426d;
+  --text-inverse: #0a060d;
+
+  --primary: #d92847;                  /* fresh blood */
+  --primary-soft: #2e0810;
+  --primary-hover: #f0455e;
+  --primary-tint: rgba(217, 40, 71, 0.20);
+
+  --accent: #e0d0f0;                   /* full-moon silver */
+  --accent-soft: #1a1226;
+
+  --success: #82bb6e;
+  --success-soft: #15240f;
+  --danger:  #ec3a52;
+  --danger-soft: #2e0810;
+  --warn:    #d8932e;
+  --warn-soft: #2c1d08;
+  --info:    #9a82d8;
+  --info-soft: #1a1130;
+
+  --peak-bg: #1d1024;
+  --peak-text: #e0d0f0;
+  --market-bg: #2e0810;
+  --market-text: #f56a7d;
+  --rest-bg: #14091a;
+  --rest-text: #8b6fa0;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.85);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.88);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.95), 0 0 80px rgba(217, 40, 71, 0.16);
+
+  --glow-top: rgba(217, 40, 71, 0.22);
+  --glow-bottom: rgba(154, 130, 216, 0.10);
+  --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18 0 0 0 0 0.10 0 0 0 0 0.25 0 0 0 0.08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Skin picker UI — segmented control in topbar */
+.skin-picker {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface);
+  padding: 2px;
+  box-shadow: var(--shadow-sm);
+}
+.skin-picker .skin-opt {
+  font-family: var(--font-display);
+  font-size: 0.7rem;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color var(--transition), background var(--transition);
+  white-space: nowrap;
+}
+.skin-picker .skin-opt:hover {
+  color: var(--text);
+}
+.skin-picker .skin-opt.active {
+  background: linear-gradient(180deg, var(--primary), var(--primary-hover));
+  color: var(--text-inverse);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 14px var(--primary-tint);
+}
+
+@media (max-width: 900px) {
+  .skin-picker .skin-opt {
+    padding: 5px 7px;
+    font-size: 0.65rem;
+    letter-spacing: 0.06em;
+  }
+}
