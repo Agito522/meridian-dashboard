@@ -3544,3 +3544,51 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 900px) {
   .te-card { padding-top: var(--space-3); }
 }
+
+/* ============================================================
+   SKIN BANNER — theme-specific hero image strip
+   Sits between header and main grid. Background swaps per skin.
+   Default = Diablo (no [data-skin] attr).
+   ============================================================ */
+.skin-banner {
+  position: relative;
+  width: 100%;
+  height: clamp(120px, 18vw, 200px);
+  margin: 0 0 var(--space-4) 0;
+  background-image: url(assets/banners/diablo.webp);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18);
+  /* Subtle bottom fade so the banner blends into the page background */
+  transition: background-image 200ms ease;
+}
+.skin-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 60%,
+    var(--bg) 100%
+  );
+}
+[data-skin="dnd"] .skin-banner {
+  background-image: url(assets/banners/dnd.webp);
+}
+[data-skin="castlevania"] .skin-banner {
+  background-image: url(assets/banners/castlevania.webp);
+}
+[data-skin="eva"] .skin-banner {
+  background-image: url(assets/banners/eva.webp);
+}
+
+/* Compact banner on small screens */
+@media (max-width: 700px) {
+  .skin-banner {
+    height: 100px;
+    margin-bottom: var(--space-3);
+  }
+}
