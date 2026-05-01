@@ -354,135 +354,173 @@
       </details>
     </section>
 
-    <!-- ============ TRADE LOG ============ -->
+    <!-- ============ TRADE JOURNAL (positions + plans + closed) ============ -->
     <section class="card trade-card">
       <div class="card-head">
         <div>
-          <h2 class="card-title">Trade log</h2>
-          <p class="card-sub">Detailed execution journal · entry, exit, R/R, mood, setup</p>
+          <h2 class="card-title">Trade journal</h2>
+          <p class="card-sub">Position cycle · executions log · battle plan · vanquished trades</p>
         </div>
-        <div class="trade-stats">
+        <div class="trade-tabs" role="tablist">
+          <button class="trade-tab active" data-trade-tab="open" role="tab">Open positions</button>
+          <button class="trade-tab" data-trade-tab="plan" role="tab">Battle plan</button>
+          <button class="trade-tab" data-trade-tab="closed" role="tab">Vanquished</button>
+        </div>
+      </div>
+
+      <!-- True Equity summary -->
+      <div class="true-equity">
+        <div class="te-card">
+          <div class="te-l">NAV (account)</div>
+          <input id="teNavInput" class="te-input" type="number" step="any" placeholder="—" aria-label="Net Account Value" />
+          <div class="te-v" id="teNav">—</div>
+        </div>
+        <div class="te-card te-loss">
+          <div class="te-l">Total max loss (open)</div>
+          <div class="te-v" id="teTotalLoss">$0</div>
+        </div>
+        <div class="te-card te-true">
+          <div class="te-l">True equity (NAV − max loss)</div>
+          <div class="te-v" id="teTrueEquity">—</div>
+        </div>
+        <div class="te-card">
+          <div class="te-l">Open exposure</div>
+          <div class="te-v" id="teExposure">$0</div>
+        </div>
+      </div>
+
+      <!-- Rollups (above table) -->
+      <div class="trade-rollups" id="tradeRollups"></div>
+
+      <!-- ============ TAB: OPEN POSITIONS ============ -->
+      <div class="trade-tab-panel" data-tab-panel="open">
+        <form class="trade-form" id="tradeAdd" autocomplete="off">
+          <div class="form-section-title">Inscribe new position (or first execution)</div>
+          <div class="trade-form-grid">
+            <div class="field">
+              <label>Market</label>
+              <select id="trMarket">
+                <option value="stock">Stock</option>
+                <option value="option">Option</option>
+                <option value="crypto">Crypto</option>
+                <option value="forex">Forex</option>
+                <option value="futures">Futures</option>
+                <option value="metals">Metals</option>
+              </select>
+            </div>
+            <div class="field"><label>Symbol</label><input id="trSymbol" type="text" placeholder="NVDA" /></div>
+            <div class="field"><label>Side</label>
+              <select id="trSide"><option value="long">Long</option><option value="short">Short</option></select>
+            </div>
+            <div class="field"><label>Type</label>
+              <select id="trTradeType"><option value="swing">Swing</option><option value="position">Position</option></select>
+            </div>
+            <div class="field"><label>Theme</label><input id="trTheme" type="text" placeholder="AI / Energy / China" /></div>
+            <div class="field"><label>Qty</label><input id="trQty" type="number" step="any" placeholder="100" /></div>
+            <div class="field"><label>Price $</label><input id="trPrice" type="number" step="any" placeholder="180.50" /></div>
+            <div class="field"><label>Date</label><input id="trDate" type="date" /></div>
+            <div class="field"><label>Fees $</label><input id="trFees" type="number" step="any" placeholder="1.50" /></div>
+            <div class="field"><label>Stop $</label><input id="trStop" type="number" step="any" placeholder="178.00" /></div>
+            <div class="field"><label>Target $</label><input id="trTarget" type="number" step="any" placeholder="190.00" /></div>
+            <div class="field field-wide"><label>Tags <span class="helper">comma-separated</span></label>
+              <input id="trTags" type="text" placeholder="breakout, volume, premarket" />
+            </div>
+            <div class="field field-wide"><label>Thesis / notes</label>
+              <input id="trNote" type="text" placeholder="Why this trade. The setup. The catalyst." />
+            </div>
+          </div>
+          <div class="trade-form-actions">
+            <span class="trade-preview" id="trPositionPreview">Cost basis — · Risk — · R/R —</span>
+            <button type="submit" class="btn-primary">Inscribe position</button>
+          </div>
+        </form>
+
+        <div class="trade-toolbar">
+          <div class="trade-filter">
+            <button class="pill active" data-trade-filter="all">All open</button>
+          </div>
+          <input id="trSearch" type="search" placeholder="Search symbol, theme, tag, note..." />
+        </div>
+
+        <div class="trades-table" id="tradesTable"></div>
+      </div>
+
+      <!-- ============ TAB: BATTLE PLAN ============ -->
+      <div class="trade-tab-panel" data-tab-panel="plan" style="display:none;">
+        <form class="trade-form" id="planAdd" autocomplete="off">
+          <div class="form-section-title">Draft a battle plan · risk-sized share count auto-computed</div>
+          <div class="trade-form-grid">
+            <div class="field"><label>Market</label>
+              <select id="plMarket">
+                <option value="stock">Stock</option>
+                <option value="option">Option</option>
+                <option value="crypto">Crypto</option>
+                <option value="forex">Forex</option>
+                <option value="futures">Futures</option>
+              </select>
+            </div>
+            <div class="field"><label>Symbol</label><input id="plSymbol" type="text" placeholder="NVDA" /></div>
+            <div class="field"><label>Side</label>
+              <select id="plSide"><option value="long">Long</option><option value="short">Short</option></select>
+            </div>
+            <div class="field"><label>Type</label>
+              <select id="plTradeType"><option value="swing">Swing</option><option value="position">Position</option></select>
+            </div>
+            <div class="field"><label>Entry $</label><input id="plEntry" type="number" step="any" placeholder="180.50" /></div>
+            <div class="field"><label>Stop $</label><input id="plStop" type="number" step="any" placeholder="178.00" /></div>
+            <div class="field"><label>Target $</label><input id="plTarget" type="number" step="any" placeholder="190.00" /></div>
+            <div class="field"><label>Risk $ <span class="helper">max loss budget</span></label>
+              <input id="plRisk" type="number" step="any" placeholder="500" />
+            </div>
+            <div class="field"><label>Theme</label><input id="plTheme" type="text" placeholder="AI / Energy" /></div>
+            <div class="field field-wide"><label>Tags <span class="helper">comma-separated</span></label>
+              <input id="plTags" type="text" placeholder="VCP, breakout, earnings" />
+            </div>
+            <div class="field field-wide"><label>Thesis</label>
+              <input id="plNote" type="text" placeholder="Catalyst, level, invalidation, expected timeframe." />
+            </div>
+          </div>
+          <div class="trade-form-actions">
+            <span class="trade-preview" id="plPreview">Shares — · R/R — · Max loss —</span>
+            <button type="submit" class="btn-primary">Draft plan</button>
+          </div>
+        </form>
+
+        <div class="plans-list" id="plansList"></div>
+      </div>
+
+      <!-- ============ TAB: VANQUISHED (CLOSED) ============ -->
+      <div class="trade-tab-panel" data-tab-panel="closed" style="display:none;">
+        <div class="closed-stats">
           <span class="ts-item">W/L <strong id="tsWL">0/0</strong></span>
           <span class="ts-item">Hit-rate <strong id="tsHit">—</strong></span>
           <span class="ts-item">Avg R <strong id="tsAvgR">—</strong></span>
           <span class="ts-item">PF <strong id="tsPF">—</strong></span>
           <span class="ts-item">Expectancy <strong id="tsExp">—</strong></span>
-          <span class="ts-item">PnL <strong id="tsPnl">$0</strong></span>
+          <span class="ts-item">Avg win <strong id="tsAvgWin">—</strong></span>
+          <span class="ts-item">Avg loss <strong id="tsAvgLoss">—</strong></span>
+          <span class="ts-item">Net P/L <strong id="tsPnl">$0</strong></span>
         </div>
+
+        <div class="trade-toolbar">
+          <div class="trade-filter">
+            <button class="pill" data-closed-range="30d">30 days</button>
+            <button class="pill" data-closed-range="60d">60 days</button>
+            <button class="pill active" data-closed-range="all">All-time</button>
+          </div>
+          <div class="breakdown-control">
+            <label class="helper" for="tsDim">Slice by</label>
+            <select id="tsDim">
+              <option value="theme">Theme</option>
+              <option value="tags">Tags</option>
+              <option value="tradeType">Type</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="breakdown-panel" id="tsBreakdown"></div>
+        <div class="trades-table closed-list" id="closedTable"></div>
       </div>
-
-      <form class="trade-form" id="tradeAdd">
-        <div class="trade-form-grid">
-          <div class="field">
-            <label>Market</label>
-            <select id="trMarket">
-              <option value="stock">Stock</option>
-              <option value="option">Option</option>
-              <option value="crypto">Crypto</option>
-              <option value="forex">Forex</option>
-              <option value="futures">Futures</option>
-              <option value="metals">Metals</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Symbol</label>
-            <input id="trSymbol" type="text" placeholder="NVDA" />
-          </div>
-          <div class="field">
-            <label>Side</label>
-            <select id="trSide"><option value="long">Long</option><option value="short">Short</option></select>
-          </div>
-          <div class="field">
-            <label>Qty</label>
-            <input id="trQty" type="number" step="any" placeholder="100" />
-          </div>
-          <div class="field">
-            <label>Entry $</label>
-            <input id="trEntry" type="number" step="any" placeholder="180.50" />
-          </div>
-          <div class="field">
-            <label>Exit $</label>
-            <input id="trExit" type="number" step="any" placeholder="185.25" />
-          </div>
-          <div class="field">
-            <label>Stop $</label>
-            <input id="trStop" type="number" step="any" placeholder="178.00" />
-          </div>
-          <div class="field">
-            <label>Target $</label>
-            <input id="trTarget" type="number" step="any" placeholder="190.00" />
-          </div>
-          <div class="field">
-            <label>Fees $</label>
-            <input id="trFees" type="number" step="any" placeholder="1.50" />
-          </div>
-          <div class="field">
-            <label>Open</label>
-            <input id="trOpenDate" type="date" />
-          </div>
-          <div class="field">
-            <label>Close</label>
-            <input id="trCloseDate" type="date" />
-          </div>
-          <div class="field">
-            <label>Setup</label>
-            <select id="trSetup">
-              <option value="">—</option>
-              <option value="VCP">VCP breakout</option>
-              <option value="Stage2">Stage 2 entry</option>
-              <option value="PowerPlay">Power Play</option>
-              <option value="Pivot">Pivot bounce</option>
-              <option value="PullbackMA">Pullback to MA</option>
-              <option value="Earnings">Earnings play</option>
-              <option value="Spread">Options spread</option>
-              <option value="Swing">Swing</option>
-              <option value="Scalp">Scalp</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Mood</label>
-            <select id="trMood">
-              <option value="">—</option>
-              <option value="calm">Calm</option>
-              <option value="focused">Focused</option>
-              <option value="fomo">FOMO</option>
-              <option value="revenge">Revenge</option>
-              <option value="tired">Tired</option>
-              <option value="impulsive">Impulsive</option>
-              <option value="disciplined">Disciplined</option>
-            </select>
-          </div>
-          <div class="field">
-            <label>Confidence <span class="helper" id="trConfVal">3/5</span></label>
-            <input id="trConf" type="range" min="1" max="5" step="1" value="3" />
-          </div>
-          <div class="field field-wide">
-            <label>Tags <span class="helper">comma-separated</span></label>
-            <input id="trTags" type="text" placeholder="breakout, volume, premarket" />
-          </div>
-          <div class="field field-wide">
-            <label>Thesis / notes</label>
-            <input id="trNote" type="text" placeholder="Why I took this trade. What worked. What I'd do differently." />
-          </div>
-        </div>
-        <div class="trade-form-actions">
-          <span class="trade-preview" id="trPreview">Net P/L — · R — · R/R —</span>
-          <button type="submit" class="btn-primary">Log trade</button>
-        </div>
-      </form>
-
-      <div class="trade-toolbar">
-        <div class="trade-filter">
-          <button class="pill active" data-trade-filter="all">All</button>
-          <button class="pill" data-trade-filter="win">Wins</button>
-          <button class="pill" data-trade-filter="loss">Losses</button>
-          <button class="pill" data-trade-filter="open">Open</button>
-        </div>
-        <input id="trSearch" type="search" placeholder="Search symbol, tag, note..." />
-      </div>
-
-      <div class="trades-table" id="tradesTable"></div>
     </section>
 
     <!-- ============ SUBSCRIPTIONS ============ -->

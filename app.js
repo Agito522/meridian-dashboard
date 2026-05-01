@@ -14,11 +14,13 @@ const defaultState = () => ({
   tasks: [],          // { id, title, track, priority, due, done, quad, skillId, createdAt }
   habits: [],         // { id, name, log: { 'YYYY-MM-DD': true } }
   reminders: [],      // { id, text, time }
-  trades: [],         // expanded — see addTrade()
+  trades: [],         // POSITIONS — { id, symbol, side, market, status, theme, tradeType, executions[], stop, target, tags, notes, createdAt }
+  plans: [],          // BATTLE PLANS — { id, symbol, market, side, entry, stop, target, riskAmt, theme, tradeType, tags, notes, createdAt }
   journals: {},       // { 'YYYY-MM-DD': { wins, lessons, tomorrow } }
   equity: {           // portfolio balance series
     startDate: '2026-01-01',
     startBalance: 0,
+    nav: 0,           // current account value (manual entry, drives True Equity calc)
     history: {},      // { 'YYYY-MM-DD': balance }
   },
   streak: { count: 0, lastActive: null },
@@ -46,9 +48,61 @@ function loadState() {
       if (!Array.isArray(S.subs.items)) S.subs.items = [];
       if (!Array.isArray(S.skills)) S.skills = [];
       if (!Array.isArray(S.books)) S.books = [];
+      if (!Array.isArray(S.plans)) S.plans = [];
       if (loaded.quotes !== undefined) S.quotes = loaded.quotes;
+      // ---- Trade migration: old single-execution rows → new position shape ----
+      if (Array.isArray(S.trades)) {
+        S.trades = S.trades.map(t => migrateTrade(t)).filter(Boolean);
+      }
     }
   } catch (e) { /* storage unavailable — fall back to in-memory */ }
+}
+
+// Convert old single-execution row to new position shape; pass through if already migrated.
+function migrateTrade(t) {
+  if (!t || typeof t !== 'object') return null;
+  if (Array.isArray(t.executions)) return t; // already migrated
+  // Old fields: { id, market, symbol, side, qty, entry, exit, stop, target, fees, openDate, closeDate, setup, mood, confidence, tags, note, createdAt }
+  const sideIsLong = (t.side || 'long') === 'long';
+  const openAction = sideIsLong ? 'buy' : 'sell';
+  const closeAction = sideIsLong ? 'sell' : 'buy';
+  const execs = [];
+  if (t.entry != null && t.qty != null) {
+    execs.push({
+      id: uid(), action: openAction,
+      qty: +t.qty, price: +t.entry,
+      date: t.openDate || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0,10) : todayKey()),
+      fees: +(t.fees || 0) / (t.exit != null && t.exit !== '' ? 2 : 1),
+      note: ''
+    });
+  }
+  if (t.exit != null && t.exit !== '' && t.qty != null) {
+    execs.push({
+      id: uid(), action: closeAction,
+      qty: +t.qty, price: +t.exit,
+      date: t.closeDate || todayKey(),
+      fees: +(t.fees || 0) / 2,
+      note: ''
+    });
+  }
+  return {
+    id: t.id || uid(),
+    symbol: (t.symbol || '').toUpperCase(),
+    market: t.market || 'stock',
+    side: t.side || 'long',
+    status: (t.exit != null && t.exit !== '') ? 'closed' : 'open',
+    tradeType: 'swing',                  // default — user can re-tag
+    theme: '',                            // user-supplied, e.g. AI / Energy / China
+    executions: execs,
+    stop: t.stop != null && t.stop !== '' ? +t.stop : null,
+    target: t.target != null && t.target !== '' ? +t.target : null,
+    tags: Array.isArray(t.tags) ? t.tags : [],
+    notes: t.note || '',
+    setup: t.setup || '',
+    mood: t.mood || '',
+    confidence: t.confidence || 3,
+    createdAt: t.createdAt || Date.now(),
+  };
 }
 
 let saveTimer;
@@ -598,249 +652,809 @@ function wireJournal() {
   });
 }
 
-// ---------------- Trades (Stonk Journal-inspired) ----------------
+// ---------------- Positions & Battle Plans (Stonk Journal-inspired) ----------------
+// Data model:
+//   position = { id, symbol, market, side: long|short, status: open|closed,
+//                tradeType: swing|position, theme, executions: [{id, action: buy|sell, qty, price, date, fees, note}],
+//                stop, target, tags, notes, setup, mood, confidence, createdAt }
+//   plan     = { id, symbol, market, side, entry, stop, target, riskAmt,
+//                tradeType, theme, tags, notes, createdAt }
+
+let tradeTab = 'open';            // 'open' | 'plan' | 'closed'
 let tradeFilter = 'all';
 let tradeSearch = '';
 let expandedTradeId = null;
+let closedRange = 'all';          // 'all' | '30d' | '60d'
 
-/* Compute derived metrics for a trade */
-function tradeMetrics(t) {
-  const sideMul = t.side === 'short' ? -1 : 1;
-  const qty = +t.qty || 0;
-  const entry = +t.entry || 0;
-  const exit = t.exit !== '' && t.exit != null ? +t.exit : null;
-  const stop = t.stop !== '' && t.stop != null ? +t.stop : null;
-  const target = t.target !== '' && t.target != null ? +t.target : null;
-  const fees = +t.fees || 0;
+/* -------- Position math -------- */
+function posMetrics(p) {
+  const sideMul = p.side === 'short' ? -1 : 1;
+  const execs = (p.executions || []).slice().sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1);
 
-  const open = exit === null;
-  let pnl = null, R = null, plannedRR = null;
-  if (!open && entry && qty) {
-    pnl = (exit - entry) * qty * sideMul - fees;
+  // For longs: buys = opens, sells = closes. For shorts: sells = opens, buys = closes.
+  const openSide = p.side === 'short' ? 'sell' : 'buy';
+  const closeSide = p.side === 'short' ? 'buy' : 'sell';
+
+  let openedQty = 0, openedCost = 0;
+  let closedQty = 0, closedProceeds = 0;
+  let totalFees = 0;
+  for (const e of execs) {
+    const q = +e.qty || 0;
+    const px = +e.price || 0;
+    const f = +e.fees || 0;
+    totalFees += f;
+    if (e.action === openSide) {
+      openedQty += q;
+      openedCost += q * px;
+    } else if (e.action === closeSide) {
+      closedQty += q;
+      closedProceeds += q * px;
+    }
   }
-  if (stop && entry && entry !== stop) {
-    const risk = Math.abs(entry - stop);
-    if (!open) R = ((exit - entry) * sideMul) / risk;
-    if (target) plannedRR = Math.abs(target - entry) / risk;
+
+  const avgOpen = openedQty > 0 ? openedCost / openedQty : 0;
+  const avgClose = closedQty > 0 ? closedProceeds / closedQty : 0;
+  const currentQty = Math.max(0, openedQty - closedQty);
+
+  // Realized P/L: per-share (avg open vs close) * matched qty * sideMul, minus fees on closed portion (proportional)
+  const matchedQty = Math.min(openedQty, closedQty);
+  const closedFeesShare = openedQty > 0 ? totalFees * (matchedQty * 2 / Math.max(1, openedQty + closedQty)) : 0;
+  const realized = matchedQty > 0 ? (avgClose - avgOpen) * matchedQty * sideMul - closedFeesShare : 0;
+
+  // Unrealized = (last_price - avgOpen) * currentQty * sideMul. We don't have a live price,
+  // so unrealized is computed against `target` (best case) and `stop` (worst case).
+  const stop = (p.stop != null && p.stop !== '') ? +p.stop : null;
+  const target = (p.target != null && p.target !== '') ? +p.target : null;
+  // Pretend "current price" = avgOpen for the headline unrealized (i.e. flat) until user adds an exit.
+  // The real story is told by upside/downside vs avgOpen.
+  const upside = (target != null && currentQty > 0) ? (target - avgOpen) * currentQty * sideMul : null;
+  const downside = (stop != null && currentQty > 0) ? (stop - avgOpen) * currentQty * sideMul : null;
+  // maxLoss = magnitude of the downside if stop hit (positive number for display)
+  const maxLoss = downside != null && downside < 0 ? Math.abs(downside) : 0;
+
+  // R-multiple on realized portion (uses avg open vs avg close vs initial stop distance)
+  let R = null;
+  if (stop != null && avgOpen && stop !== avgOpen && matchedQty > 0) {
+    const riskPerShare = Math.abs(avgOpen - stop);
+    R = ((avgClose - avgOpen) * sideMul) / riskPerShare;
   }
-  return { open, pnl, R, plannedRR };
+  let plannedRR = null;
+  if (stop != null && target != null && avgOpen && stop !== avgOpen) {
+    plannedRR = Math.abs(target - avgOpen) / Math.abs(avgOpen - stop);
+  }
+
+  // Total exposure (open shares × avg open)
+  const exposure = currentQty * avgOpen;
+  const totalBought = (p.side === 'short' ? closedQty : openedQty);
+  const totalSold = (p.side === 'short' ? openedQty : closedQty);
+
+  return {
+    avgOpen, avgClose, currentQty, openedQty, closedQty, matchedQty,
+    realized, upside, downside, maxLoss, R, plannedRR, exposure,
+    totalBought, totalSold, totalFees,
+    isOpen: currentQty > 0,
+    isClosed: openedQty > 0 && currentQty === 0,
+  };
 }
 
+/* -------- Search/filter helpers -------- */
 function matchesTradeSearch(t) {
   if (!tradeSearch) return true;
   const q = tradeSearch.toLowerCase();
   const tags = (t.tags || []).join(' ').toLowerCase();
   return (t.symbol || '').toLowerCase().includes(q)
-      || (t.note || '').toLowerCase().includes(q)
+      || (t.notes || '').toLowerCase().includes(q)
       || (t.setup || '').toLowerCase().includes(q)
+      || (t.theme || '').toLowerCase().includes(q)
       || tags.includes(q);
 }
 
+function isWithinRange(dateStr, range) {
+  if (!dateStr || range === 'all') return true;
+  const days = range === '30d' ? 30 : 60;
+  const d = new Date(dateStr + 'T00:00:00');
+  const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - days);
+  return d >= cutoff;
+}
+
+function lastExecDate(p) {
+  const execs = p.executions || [];
+  if (!execs.length) return p.createdAt ? new Date(p.createdAt).toISOString().slice(0,10) : '';
+  return execs.reduce((acc, e) => e.date > acc ? e.date : acc, '');
+}
+
+function firstExecDate(p) {
+  const execs = p.executions || [];
+  if (!execs.length) return p.createdAt ? new Date(p.createdAt).toISOString().slice(0,10) : '';
+  return execs.reduce((acc, e) => (acc === '' || e.date < acc) ? e.date : acc, '');
+}
+
+/* -------- Format helpers (trade-scoped) -------- */
+const fmtPnl = (n) => (n >= 0 ? '+$' : '−$') + Math.abs(n).toFixed(2);
+const pnlClass = (n) => n > 0 ? 'pos' : n < 0 ? 'neg' : 'flat';
+
+/* -------- Render: tab switching -------- */
 function renderTrades() {
-  const root = $('#tradesTable');
-  root.innerHTML = '';
-
-  // Sort: most recent first (closeDate, then openDate, then createdAt)
-  const trades = S.trades.slice().sort((a, b) => {
-    const ad = a.closeDate || a.openDate || 0;
-    const bd = b.closeDate || b.openDate || 0;
-    if (ad === bd) return (b.createdAt || 0) - (a.createdAt || 0);
-    return ad < bd ? 1 : -1;
+  // Show/hide tab panels
+  $$('.trade-tab-panel').forEach(el => {
+    el.style.display = el.dataset.tabPanel === tradeTab ? '' : 'none';
   });
+  $$('[data-trade-tab]').forEach(b => b.classList.toggle('active', b.dataset.tradeTab === tradeTab));
 
-  // Filter
-  const filtered = trades.filter(t => {
-    if (!matchesTradeSearch(t)) return false;
-    const m = tradeMetrics(t);
-    if (tradeFilter === 'open') return m.open;
-    if (tradeFilter === 'win')  return !m.open && m.pnl > 0;
-    if (tradeFilter === 'loss') return !m.open && m.pnl < 0;
-    return true;
-  });
+  if (tradeTab === 'open') renderOpenPositions();
+  else if (tradeTab === 'plan') renderPlans();
+  else renderClosedPositions();
 
-  if (filtered.length === 0) {
-    root.appendChild(h('div', { class: 'trades-empty' },
-      S.trades.length === 0
-        ? 'No trades yet. Log your first one above to start building your edge.'
-        : 'No trades match this filter.'
-    ));
-  } else {
-    // Header (11-column grid in CSS)
-    root.appendChild(h('div', { class: 'trades-table-head' },
-      h('span', {}, 'Date'),
-      h('span', {}, 'Symbol'),
-      h('span', {}, 'Side'),
-      h('span', {}, 'Qty'),
-      h('span', {}, 'Entry'),
-      h('span', {}, 'Exit'),
-      h('span', {}, 'Net P/L'),
-      h('span', {}, 'R'),
-      h('span', {}, 'Setup'),
-      h('span', {}, 'Mood'),
-      h('span', {}, '')
-    ));
-
-    filtered.forEach(t => {
-      const m = tradeMetrics(t);
-      const dateStr = t.closeDate || t.openDate || (t.createdAt ? new Date(t.createdAt).toISOString().slice(0, 10) : '—');
-      const pnlClass = m.open ? 'open' : (m.pnl >= 0 ? 'pos' : 'neg');
-      const pnlText = m.open ? 'open' : (m.pnl >= 0 ? '+' : '−') + '$' + Math.abs(m.pnl).toFixed(2);
-      const rText = m.open || m.R == null ? '—' : (m.R >= 0 ? '+' : '') + m.R.toFixed(2) + 'R';
-
-      const row = h('div', {
-        class: `trade-row ${expandedTradeId === t.id ? 'expanded' : ''}`,
-        data: { tradeId: t.id },
-        onClick: () => {
-          expandedTradeId = expandedTradeId === t.id ? null : t.id;
-          renderTrades();
-        }
-      },
-        h('span', { class: 'tr-date' }, dateStr.slice(5)),
-        h('span', { class: 'tr-sym' }, (t.symbol || '—').toUpperCase()),
-        h('span', { class: `tr-side ${t.side}` }, t.side || '—'),
-        h('span', { class: 'tr-num' }, t.qty != null ? String(t.qty) : '—'),
-        h('span', { class: 'tr-num' }, t.entry != null ? Number(t.entry).toFixed(2) : '—'),
-        h('span', { class: 'tr-num' }, t.exit != null && t.exit !== '' ? Number(t.exit).toFixed(2) : '·'),
-        h('span', { class: `tr-pnl ${pnlClass}` }, pnlText),
-        h('span', { class: `tr-r ${m.R >= 0 ? 'pos' : 'neg'}` }, rText),
-        h('span', { class: 'tr-num' }, t.setup || '—'),
-        h('span', {}, t.mood ? h('span', { class: `tr-mood ${t.mood}` }, t.mood) : '—'),
-        h('button', {
-          class: 'tr-del',
-          onClick: (e) => { e.stopPropagation(); deleteTrade(t.id); }
-        }, '✕')
-      );
-      root.appendChild(row);
-
-      // Expanded detail (uses .trade-detail with .td-item children)
-      if (expandedTradeId === t.id) {
-        const tags = (t.tags || []).filter(Boolean);
-        const conf = t.confidence || 0;
-        const item = (k, v) => h('div', { class: 'td-item' }, h('label', {}, k), h('span', {}, v));
-        const detail = h('div', { class: 'trade-detail' },
-          item('Market', t.market || '—'),
-          item('Entry', t.entry != null ? '$' + Number(t.entry).toFixed(2) : '—'),
-          item('Exit', t.exit != null && t.exit !== '' ? '$' + Number(t.exit).toFixed(2) : 'open'),
-          item('Stop', t.stop != null && t.stop !== '' ? '$' + Number(t.stop).toFixed(2) : '—'),
-          item('Target', t.target != null && t.target !== '' ? '$' + Number(t.target).toFixed(2) : '—'),
-          item('Fees', '$' + (Number(t.fees) || 0).toFixed(2)),
-          item('Opened', t.openDate || '—'),
-          item('Closed', t.closeDate || '—'),
-          item('Planned R/R', m.plannedRR != null ? m.plannedRR.toFixed(2) : '—'),
-          h('div', { class: 'td-item' },
-            h('label', {}, 'Confidence'),
-            h('span', { class: 'tr-conf' },
-              ...Array.from({ length: 5 }, (_, i) => h('span', { class: `dot ${i < conf ? 'on' : ''}` }))
-            )
-          ),
-          h('div', { class: 'td-item' },
-            h('label', {}, 'Tags'),
-            h('span', {},
-              tags.length
-                ? tags.map(tag => h('span', { class: 'tr-tag' }, tag))
-                : '—'
-            )
-          ),
-          h('div', { class: 'td-item', style: 'grid-column: 1 / -1;' },
-            h('label', {}, 'Notes / thesis'),
-            h('span', { style: 'white-space: pre-wrap; font-family: var(--font-body);' }, t.note || '—')
-          )
-        );
-        root.appendChild(detail);
-      }
-    });
-  }
-
+  renderRollups();
+  renderTrueEquity();
   renderTradeStats();
 }
 
+/* -------- Open positions (table with expandable executions) -------- */
+function renderOpenPositions() {
+  const root = $('#tradesTable');
+  root.innerHTML = '';
+
+  const items = S.trades.slice().filter(p => {
+    if (!matchesTradeSearch(p)) return false;
+    const m = posMetrics(p);
+    if (tradeFilter === 'open' && !m.isOpen) return false;
+    if (tradeFilter === 'closed' && !m.isClosed) return false;
+    return m.isOpen; // open tab only shows open positions
+  }).sort((a, b) => {
+    const da = lastExecDate(a) || '';
+    const db = lastExecDate(b) || '';
+    return da < db ? 1 : -1;
+  });
+
+  if (items.length === 0) {
+    root.appendChild(h('div', { class: 'trades-empty' },
+      S.trades.length === 0
+        ? 'No positions yet. Inscribe your first execution above to begin the campaign.'
+        : 'No open positions match this filter.'
+    ));
+    return;
+  }
+
+  root.appendChild(h('div', { class: 'trades-table-head pos-head' },
+    h('span', {}, 'Sym'),
+    h('span', {}, 'Side'),
+    h('span', {}, 'Type'),
+    h('span', {}, 'Theme'),
+    h('span', {}, 'Qty'),
+    h('span', {}, 'Avg in'),
+    h('span', {}, 'Stop'),
+    h('span', {}, 'Target'),
+    h('span', {}, 'Downside'),
+    h('span', {}, 'R/R'),
+    h('span', {}, '')
+  ));
+
+  items.forEach(p => {
+    const m = posMetrics(p);
+    const expanded = expandedTradeId === p.id;
+    const row = h('div', {
+      class: `trade-row pos-row ${expanded ? 'expanded' : ''}`,
+      data: { tradeId: p.id },
+      onClick: () => { expandedTradeId = expanded ? null : p.id; renderTrades(); }
+    },
+      h('span', { class: 'tr-sym' }, (p.symbol || '—').toUpperCase()),
+      h('span', { class: `tr-side ${p.side}` }, p.side || '—'),
+      h('span', { class: 'tr-tagchip' }, p.tradeType || 'swing'),
+      h('span', { class: 'tr-theme' }, p.theme || '—'),
+      h('span', { class: 'tr-num' }, m.currentQty.toString()),
+      h('span', { class: 'tr-num' }, m.avgOpen ? '$' + m.avgOpen.toFixed(2) : '—'),
+      h('span', { class: 'tr-num' }, p.stop != null ? '$' + (+p.stop).toFixed(2) : '—'),
+      h('span', { class: 'tr-num' }, p.target != null ? '$' + (+p.target).toFixed(2) : '—'),
+      h('span', { class: `tr-pnl ${m.maxLoss > 0 ? 'neg' : 'flat'}` },
+        m.downside != null ? (m.downside >= 0 ? '+$' : '−$') + Math.abs(m.downside).toFixed(0) : '—'),
+      h('span', { class: 'tr-r' }, m.plannedRR != null ? m.plannedRR.toFixed(2) : '—'),
+      h('button', {
+        class: 'tr-del', title: 'Vanquish position',
+        onClick: (e) => { e.stopPropagation(); if (confirm('Delete this position and all its executions?')) deletePosition(p.id); }
+      }, '✕')
+    );
+    root.appendChild(row);
+
+    if (expanded) root.appendChild(renderPositionDetail(p, m));
+  });
+}
+
+/* -------- Closed positions (table) -------- */
+function renderClosedPositions() {
+  const root = $('#closedTable');
+  if (!root) return;
+  root.innerHTML = '';
+
+  const items = S.trades.slice().filter(p => {
+    if (!matchesTradeSearch(p)) return false;
+    const m = posMetrics(p);
+    if (!m.isClosed) return false;
+    if (!isWithinRange(lastExecDate(p), closedRange)) return false;
+    return true;
+  }).sort((a, b) => {
+    const da = lastExecDate(a) || '';
+    const db = lastExecDate(b) || '';
+    return da < db ? 1 : -1;
+  });
+
+  if (items.length === 0) {
+    root.appendChild(h('div', { class: 'trades-empty' }, 'No vanquished trades in this window.'));
+    return;
+  }
+
+  root.appendChild(h('div', { class: 'trades-table-head closed-head' },
+    h('span', {}, 'Closed'),
+    h('span', {}, 'Sym'),
+    h('span', {}, 'Side'),
+    h('span', {}, 'Type'),
+    h('span', {}, 'Theme'),
+    h('span', {}, 'Qty'),
+    h('span', {}, 'Avg in'),
+    h('span', {}, 'Avg out'),
+    h('span', {}, 'Realized'),
+    h('span', {}, 'R'),
+    h('span', {}, '')
+  ));
+
+  items.forEach(p => {
+    const m = posMetrics(p);
+    const expanded = expandedTradeId === p.id;
+    const closed = lastExecDate(p) || '—';
+    const row = h('div', {
+      class: `trade-row closed-row ${expanded ? 'expanded' : ''}`,
+      data: { tradeId: p.id },
+      onClick: () => { expandedTradeId = expanded ? null : p.id; renderTrades(); }
+    },
+      h('span', { class: 'tr-date' }, closed.slice(5)),
+      h('span', { class: 'tr-sym' }, (p.symbol || '—').toUpperCase()),
+      h('span', { class: `tr-side ${p.side}` }, p.side || '—'),
+      h('span', { class: 'tr-tagchip' }, p.tradeType || 'swing'),
+      h('span', { class: 'tr-theme' }, p.theme || '—'),
+      h('span', { class: 'tr-num' }, String(m.matchedQty)),
+      h('span', { class: 'tr-num' }, m.avgOpen ? '$' + m.avgOpen.toFixed(2) : '—'),
+      h('span', { class: 'tr-num' }, m.avgClose ? '$' + m.avgClose.toFixed(2) : '—'),
+      h('span', { class: `tr-pnl ${pnlClass(m.realized)}` }, fmtPnl(m.realized)),
+      h('span', { class: `tr-r ${pnlClass(m.R || 0)}` }, m.R != null ? (m.R >= 0 ? '+' : '') + m.R.toFixed(2) + 'R' : '—'),
+      h('button', {
+        class: 'tr-del',
+        onClick: (e) => { e.stopPropagation(); if (confirm('Delete this trade?')) deletePosition(p.id); }
+      }, '✕')
+    );
+    root.appendChild(row);
+    if (expanded) root.appendChild(renderPositionDetail(p, m));
+  });
+}
+
+/* -------- Position expanded detail (executions log + edit) -------- */
+function renderPositionDetail(p, m) {
+  const execs = (p.executions || []).slice().sort((a, b) => (a.date || '') < (b.date || '') ? -1 : 1);
+
+  const execList = h('div', { class: 'exec-list' },
+    h('div', { class: 'exec-head' },
+      h('span', {}, 'Date'), h('span', {}, 'Action'), h('span', {}, 'Qty'),
+      h('span', {}, 'Price'), h('span', {}, 'Fees'), h('span', {}, 'Cash flow'), h('span', {}, '')
+    ),
+    ...execs.map(e => {
+      const cf = (e.action === 'buy' ? -1 : 1) * (+e.qty || 0) * (+e.price || 0) - (+e.fees || 0);
+      return h('div', { class: 'exec-row' },
+        h('span', { class: 'tr-date' }, (e.date || '—').slice(5)),
+        h('span', { class: `exec-action ${e.action}` }, e.action),
+        h('span', { class: 'tr-num' }, String(e.qty)),
+        h('span', { class: 'tr-num' }, '$' + (+e.price).toFixed(2)),
+        h('span', { class: 'tr-num' }, '$' + (+e.fees || 0).toFixed(2)),
+        h('span', { class: `tr-num ${pnlClass(cf)}` }, fmtPnl(cf)),
+        h('button', {
+          class: 'tr-del',
+          onClick: (ev) => { ev.stopPropagation(); deleteExecution(p.id, e.id); }
+        }, '✕')
+      );
+    })
+  );
+
+  // Inline form to add an execution
+  const form = h('form', {
+    class: 'exec-form',
+    onClick: (e) => e.stopPropagation(),
+    onSubmit: (e) => {
+      e.preventDefault();
+      const action = form.querySelector('[name="action"]').value;
+      const qty = +form.querySelector('[name="qty"]').value;
+      const price = +form.querySelector('[name="price"]').value;
+      const date = form.querySelector('[name="date"]').value || todayKey();
+      const fees = +form.querySelector('[name="fees"]').value || 0;
+      if (!qty || !price) return;
+      addExecution(p.id, { action, qty, price, date, fees });
+    }
+  },
+    h('select', { name: 'action' },
+      h('option', { value: 'buy' }, 'Buy'),
+      h('option', { value: 'sell' }, 'Sell')
+    ),
+    h('input', { name: 'qty', type: 'number', step: 'any', placeholder: 'Qty', required: 'required' }),
+    h('input', { name: 'price', type: 'number', step: 'any', placeholder: 'Price', required: 'required' }),
+    h('input', { name: 'date', type: 'date', value: todayKey() }),
+    h('input', { name: 'fees', type: 'number', step: 'any', placeholder: 'Fees' }),
+    h('button', { type: 'submit', class: 'btn-primary' }, 'Inscribe')
+  );
+
+  // Stop/Target/tags edit row
+  const meta = h('form', {
+    class: 'pos-meta-form',
+    onClick: (e) => e.stopPropagation(),
+    onSubmit: (e) => {
+      e.preventDefault();
+      const stop = meta.querySelector('[name="stop"]').value;
+      const target = meta.querySelector('[name="target"]').value;
+      const theme = meta.querySelector('[name="theme"]').value.trim();
+      const tradeType = meta.querySelector('[name="tradeType"]').value;
+      const tags = meta.querySelector('[name="tags"]').value;
+      const notes = meta.querySelector('[name="notes"]').value;
+      updatePosition(p.id, {
+        stop: stop !== '' ? +stop : null,
+        target: target !== '' ? +target : null,
+        theme, tradeType,
+        tags: tags.split(',').map(s => s.trim()).filter(Boolean),
+        notes,
+      });
+    }
+  },
+    h('div', { class: 'meta-grid' },
+      h('label', {}, 'Stop $', h('input', { name: 'stop', type: 'number', step: 'any', value: p.stop != null ? p.stop : '' })),
+      h('label', {}, 'Target $', h('input', { name: 'target', type: 'number', step: 'any', value: p.target != null ? p.target : '' })),
+      h('label', {}, 'Type',
+        h('select', { name: 'tradeType' },
+          h('option', { value: 'swing', ...(p.tradeType === 'swing' ? { selected: 'selected' } : {}) }, 'Swing'),
+          h('option', { value: 'position', ...(p.tradeType === 'position' ? { selected: 'selected' } : {}) }, 'Position')
+        )
+      ),
+      h('label', {}, 'Theme', h('input', { name: 'theme', type: 'text', placeholder: 'AI / Energy / China', value: p.theme || '' })),
+      h('label', { class: 'meta-wide' }, 'Tags (comma)', h('input', { name: 'tags', type: 'text', value: (p.tags || []).join(', ') })),
+      h('label', { class: 'meta-wide' }, 'Thesis / notes', h('input', { name: 'notes', type: 'text', value: p.notes || '' }))
+    ),
+    h('button', { type: 'submit', class: 'btn-secondary' }, 'Save changes')
+  );
+
+  // Summary chips
+  const summary = h('div', { class: 'pos-summary' },
+    chip('Bought', m.totalBought + ' sh'),
+    chip('Sold', m.totalSold + ' sh'),
+    chip('Avg in', m.avgOpen ? '$' + m.avgOpen.toFixed(2) : '—'),
+    chip('Avg out', m.avgClose ? '$' + m.avgClose.toFixed(2) : '—'),
+    chip('Realized', fmtPnl(m.realized), pnlClass(m.realized)),
+    chip('Upside', m.upside != null ? fmtPnl(m.upside) : '—', m.upside != null ? pnlClass(m.upside) : ''),
+    chip('Max loss', m.maxLoss ? '−$' + m.maxLoss.toFixed(0) : '—', m.maxLoss ? 'neg' : ''),
+    chip('R', m.R != null ? (m.R >= 0 ? '+' : '') + m.R.toFixed(2) + 'R' : '—', m.R != null ? pnlClass(m.R) : ''),
+    chip('Planned R/R', m.plannedRR != null ? m.plannedRR.toFixed(2) : '—'),
+  );
+
+  return h('div', {
+    class: 'trade-detail pos-detail',
+    onClick: (e) => e.stopPropagation()
+  },
+    summary,
+    h('div', { class: 'detail-section-title' }, 'Executions log'),
+    execList,
+    h('div', { class: 'detail-section-title' }, 'Add execution'),
+    form,
+    h('div', { class: 'detail-section-title' }, 'Position details'),
+    meta
+  );
+}
+
+function chip(label, value, mod) {
+  return h('span', { class: `pos-chip ${mod || ''}` },
+    h('span', { class: 'pc-l' }, label),
+    h('span', { class: 'pc-v' }, value)
+  );
+}
+
+/* -------- Battle plans (Trading Plan tab) -------- */
+function renderPlans() {
+  const root = $('#plansList');
+  if (!root) return;
+  root.innerHTML = '';
+
+  if (!S.plans || S.plans.length === 0) {
+    root.appendChild(h('div', { class: 'trades-empty' }, 'No battle plans yet. Draft one above — discipline lives here.'));
+    return;
+  }
+
+  S.plans.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).forEach(plan => {
+    root.appendChild(renderPlanCard(plan));
+  });
+}
+
+function planMetrics(pl) {
+  const entry = +pl.entry || 0;
+  const stop = +pl.stop || 0;
+  const target = +pl.target || 0;
+  const risk = +pl.riskAmt || 0;
+  const sideMul = pl.side === 'short' ? -1 : 1;
+  const perShareRisk = entry && stop && entry !== stop ? Math.abs(entry - stop) : 0;
+  const shares = perShareRisk > 0 && risk > 0 ? Math.floor(risk / perShareRisk) : 0;
+  const rr = perShareRisk > 0 && target ? Math.abs(target - entry) / perShareRisk : 0;
+  const maxLoss = perShareRisk * shares;
+  const exposure = shares * entry;
+  const reward = perShareRisk > 0 && target && shares > 0 ? (target - entry) * shares * sideMul : 0;
+  return { perShareRisk, shares, rr, maxLoss, exposure, reward };
+}
+
+function renderPlanCard(pl) {
+  const m = planMetrics(pl);
+  return h('div', { class: 'plan-card' },
+    h('div', { class: 'plan-head' },
+      h('div', { class: 'plan-title' },
+        h('span', { class: 'tr-sym' }, (pl.symbol || '—').toUpperCase()),
+        h('span', { class: `tr-side ${pl.side}` }, pl.side || 'long'),
+        h('span', { class: 'tr-tagchip' }, pl.tradeType || 'swing'),
+        pl.theme ? h('span', { class: 'tr-theme' }, pl.theme) : null
+      ),
+      h('div', { class: 'plan-actions' },
+        h('button', {
+          class: 'btn-primary',
+          title: 'Convert plan into a real position with first execution',
+          onClick: () => convertPlanToPosition(pl.id)
+        }, 'Convert to position'),
+        h('button', {
+          class: 'tr-del-x',
+          title: 'Discard plan',
+          onClick: () => { if (confirm('Discard this plan?')) deletePlan(pl.id); }
+        }, '✕')
+      )
+    ),
+    h('div', { class: 'plan-grid' },
+      stat('Entry', '$' + (+pl.entry || 0).toFixed(2)),
+      stat('Stop', '$' + (+pl.stop || 0).toFixed(2)),
+      stat('Target', pl.target ? '$' + (+pl.target).toFixed(2) : '—'),
+      stat('Risk $', '$' + (+pl.riskAmt || 0).toFixed(0)),
+      stat('Risk/share', '$' + m.perShareRisk.toFixed(2)),
+      stat('Shares', String(m.shares), 'big'),
+      stat('Exposure', '$' + m.exposure.toFixed(0)),
+      stat('Max loss', '−$' + m.maxLoss.toFixed(0), 'neg'),
+      stat('Reward', m.reward ? fmtPnl(m.reward) : '—', pnlClass(m.reward)),
+      stat('R/R', m.rr ? m.rr.toFixed(2) : '—', m.rr >= 2 ? 'pos' : (m.rr > 0 ? '' : 'neg'))
+    ),
+    pl.notes ? h('div', { class: 'plan-notes' }, pl.notes) : null,
+    pl.tags && pl.tags.length ? h('div', { class: 'plan-tags' },
+      ...pl.tags.map(t => h('span', { class: 'tr-tag' }, t))
+    ) : null
+  );
+}
+
+function stat(label, value, mod) {
+  return h('div', { class: `plan-stat ${mod || ''}` },
+    h('div', { class: 'ps-l' }, label),
+    h('div', { class: 'ps-v' }, value)
+  );
+}
+
+/* -------- Rollups (above table): theme & trade-type exposure -------- */
+function renderRollups() {
+  const root = $('#tradeRollups');
+  if (!root) return;
+  root.innerHTML = '';
+  const open = S.trades.filter(p => posMetrics(p).isOpen);
+  if (open.length === 0) { root.style.display = 'none'; return; }
+  root.style.display = '';
+
+  const groupBy = (arr, keyFn) => {
+    const o = {};
+    arr.forEach(p => { const k = keyFn(p) || '—'; (o[k] = o[k] || []).push(p); });
+    return o;
+  };
+
+  const summarize = (positions) => {
+    let exposure = 0, maxLoss = 0, upside = 0, count = positions.length;
+    positions.forEach(p => {
+      const m = posMetrics(p);
+      exposure += m.exposure;
+      maxLoss += m.maxLoss;
+      if (m.upside != null) upside += m.upside;
+    });
+    return { count, exposure, maxLoss, upside };
+  };
+
+  // By trade type (swing / position)
+  const byType = groupBy(open, p => p.tradeType || 'swing');
+  const typeRow = h('div', { class: 'rollup-row' },
+    h('div', { class: 'rollup-label' }, 'By trade type'),
+    ...Object.keys(byType).map(k => {
+      const s = summarize(byType[k]);
+      return h('div', { class: 'rollup-card' },
+        h('div', { class: 'rollup-name' }, `${k} (${s.count})`),
+        h('div', { class: 'rollup-stats' },
+          h('span', {}, 'Exposure $' + s.exposure.toFixed(0)),
+          h('span', { class: 'neg' }, 'Max loss −$' + s.maxLoss.toFixed(0)),
+          h('span', { class: 'pos' }, 'Upside +$' + s.upside.toFixed(0))
+        )
+      );
+    })
+  );
+
+  // By theme
+  const byTheme = groupBy(open, p => p.theme || 'untagged');
+  const themeRow = h('div', { class: 'rollup-row' },
+    h('div', { class: 'rollup-label' }, 'By theme'),
+    ...Object.keys(byTheme).map(k => {
+      const s = summarize(byTheme[k]);
+      return h('div', { class: 'rollup-card' },
+        h('div', { class: 'rollup-name' }, `${k} (${s.count})`),
+        h('div', { class: 'rollup-stats' },
+          h('span', {}, '$' + s.exposure.toFixed(0)),
+          h('span', { class: 'neg' }, '−$' + s.maxLoss.toFixed(0))
+        )
+      );
+    })
+  );
+
+  root.appendChild(typeRow);
+  root.appendChild(themeRow);
+}
+
+/* -------- True Equity card -------- */
+function renderTrueEquity() {
+  const navEl = $('#teNav');
+  const tlEl = $('#teTotalLoss');
+  const trueEl = $('#teTrueEquity');
+  const expEl = $('#teExposure');
+  if (!navEl || !tlEl || !trueEl) return;
+
+  const nav = +(S.equity.nav || 0);
+  const open = S.trades.filter(p => posMetrics(p).isOpen);
+  let totalMaxLoss = 0, totalExposure = 0;
+  open.forEach(p => {
+    const m = posMetrics(p);
+    totalMaxLoss += m.maxLoss;
+    totalExposure += m.exposure;
+  });
+  const trueEquity = nav - totalMaxLoss;
+
+  navEl.textContent = nav ? '$' + nav.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+  tlEl.textContent = totalMaxLoss ? '−$' + totalMaxLoss.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '$0';
+  trueEl.textContent = nav ? '$' + trueEquity.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '—';
+  if (expEl) expEl.textContent = totalExposure ? '$' + totalExposure.toLocaleString(undefined, { maximumFractionDigits: 0 }) : '$0';
+  // Color the true equity vs nav
+  if (nav && trueEquity < nav) trueEl.style.color = 'var(--danger)';
+  else trueEl.style.color = 'var(--text)';
+
+  const navInput = $('#teNavInput');
+  if (navInput && document.activeElement !== navInput) navInput.value = nav || '';
+}
+
+/* -------- Closed-trade stats panel -------- */
 function renderTradeStats() {
-  const closed = S.trades.map(t => ({ t, m: tradeMetrics(t) })).filter(x => !x.m.open && x.m.pnl != null);
-  const wins = closed.filter(x => x.m.pnl > 0);
-  const losses = closed.filter(x => x.m.pnl < 0);
-  const total = closed.length;
-  const totalPnl = closed.reduce((s, x) => s + x.m.pnl, 0);
-  const grossWin = wins.reduce((s, x) => s + x.m.pnl, 0);
-  const grossLoss = Math.abs(losses.reduce((s, x) => s + x.m.pnl, 0));
+  const closed = S.trades.map(p => ({ p, m: posMetrics(p) })).filter(x => x.m.isClosed);
+  // Date filter for stats also follows closedRange
+  const filtered = closed.filter(({ p }) => isWithinRange(lastExecDate(p), closedRange));
+
+  const wins = filtered.filter(x => x.m.realized > 0);
+  const losses = filtered.filter(x => x.m.realized < 0);
+  const total = filtered.length;
+  const totalPnl = filtered.reduce((s, x) => s + x.m.realized, 0);
+  const grossWin = wins.reduce((s, x) => s + x.m.realized, 0);
+  const grossLoss = Math.abs(losses.reduce((s, x) => s + x.m.realized, 0));
   const avgWin = wins.length ? grossWin / wins.length : 0;
   const avgLoss = losses.length ? grossLoss / losses.length : 0;
   const winRate = total ? wins.length / total : 0;
   const lossRate = total ? losses.length / total : 0;
   const expectancy = total ? (winRate * avgWin) - (lossRate * avgLoss) : 0;
   const pf = grossLoss > 0 ? grossWin / grossLoss : (grossWin > 0 ? Infinity : 0);
-  const rTrades = closed.filter(x => x.m.R != null);
+  const rTrades = filtered.filter(x => x.m.R != null);
   const avgR = rTrades.length ? rTrades.reduce((s, x) => s + x.m.R, 0) / rTrades.length : null;
 
-  $('#tsWL').textContent = `${wins.length}/${losses.length}`;
-  $('#tsHit').textContent = total ? `${Math.round(winRate * 100)}%` : '—';
-  const pnlEl = $('#tsPnl');
-  pnlEl.textContent = total ? (totalPnl >= 0 ? '+$' : '−$') + Math.abs(totalPnl).toFixed(2) : '—';
-  pnlEl.style.color = totalPnl >= 0 ? 'var(--success)' : 'var(--danger)';
+  const set = (id, v, color) => {
+    const el = $('#' + id);
+    if (!el) return;
+    el.textContent = v;
+    if (color) el.style.color = color;
+  };
+  set('tsWL', `${wins.length}/${losses.length}`);
+  set('tsHit', total ? `${Math.round(winRate * 100)}%` : '—');
+  set('tsPnl', total ? fmtPnl(totalPnl) : '—', totalPnl >= 0 ? 'var(--success)' : 'var(--danger)');
+  set('tsAvgR', avgR == null ? '—' : (avgR >= 0 ? '+' : '') + avgR.toFixed(2) + 'R');
+  set('tsPF', !total ? '—' : (pf === Infinity ? '∞' : pf.toFixed(2)));
+  set('tsExp', !total ? '—' : (expectancy >= 0 ? '+$' : '−$') + Math.abs(expectancy).toFixed(2));
+  set('tsAvgWin', wins.length ? '+$' + avgWin.toFixed(0) : '—', 'var(--success)');
+  set('tsAvgLoss', losses.length ? '−$' + avgLoss.toFixed(0) : '—', 'var(--danger)');
 
-  const avgREl = $('#tsAvgR'); if (avgREl) avgREl.textContent = avgR == null ? '—' : (avgR >= 0 ? '+' : '') + avgR.toFixed(2) + 'R';
-  const pfEl = $('#tsPF'); if (pfEl) pfEl.textContent = !total ? '—' : (pf === Infinity ? '∞' : pf.toFixed(2));
-  const expEl = $('#tsExp'); if (expEl) expEl.textContent = !total ? '—' : (expectancy >= 0 ? '+$' : '−$') + Math.abs(expectancy).toFixed(2);
+  // Breakdown table by tag/theme/type
+  const breakdown = $('#tsBreakdown');
+  if (breakdown) {
+    breakdown.innerHTML = '';
+    const groupBy = (key) => {
+      const groups = {};
+      filtered.forEach(x => {
+        const arr = key === 'tags' ? (x.p.tags && x.p.tags.length ? x.p.tags : ['untagged'])
+                  : key === 'theme' ? [x.p.theme || 'untagged']
+                  : [x.p.tradeType || 'swing'];
+        arr.forEach(k => {
+          (groups[k] = groups[k] || []).push(x);
+        });
+      });
+      return groups;
+    };
+    const dim = ($('#tsDim') && $('#tsDim').value) || 'theme';
+    const groups = groupBy(dim);
+    const keys = Object.keys(groups).sort();
+    if (keys.length === 0) {
+      breakdown.appendChild(h('div', { class: 'trades-empty' }, 'No closed trades in this window.'));
+    } else {
+      breakdown.appendChild(h('div', { class: 'breakdown-head' },
+        h('span', {}, dim === 'tags' ? 'Tag' : dim === 'theme' ? 'Theme' : 'Type'),
+        h('span', {}, '#'),
+        h('span', {}, 'Win%'),
+        h('span', {}, 'Avg R'),
+        h('span', {}, 'Expect'),
+        h('span', {}, 'Net P/L')
+      ));
+      keys.forEach(k => {
+        const arr = groups[k];
+        const w = arr.filter(x => x.m.realized > 0).length;
+        const l = arr.filter(x => x.m.realized < 0).length;
+        const tot = arr.length;
+        const wr = tot ? w / tot : 0;
+        const lr = tot ? l / tot : 0;
+        const pnl = arr.reduce((s, x) => s + x.m.realized, 0);
+        const aw = w ? arr.filter(x => x.m.realized > 0).reduce((s, x) => s + x.m.realized, 0) / w : 0;
+        const al = l ? Math.abs(arr.filter(x => x.m.realized < 0).reduce((s, x) => s + x.m.realized, 0)) / l : 0;
+        const exp = (wr * aw) - (lr * al);
+        const rArr = arr.filter(x => x.m.R != null);
+        const ar = rArr.length ? rArr.reduce((s, x) => s + x.m.R, 0) / rArr.length : null;
+        breakdown.appendChild(h('div', { class: 'breakdown-row' },
+          h('span', { class: 'tr-tagchip' }, k),
+          h('span', { class: 'tr-num' }, String(tot)),
+          h('span', { class: 'tr-num' }, Math.round(wr * 100) + '%'),
+          h('span', { class: 'tr-num' }, ar == null ? '—' : (ar >= 0 ? '+' : '') + ar.toFixed(2) + 'R'),
+          h('span', { class: `tr-num ${pnlClass(exp)}` }, (exp >= 0 ? '+$' : '−$') + Math.abs(exp).toFixed(0)),
+          h('span', { class: `tr-num ${pnlClass(pnl)}` }, fmtPnl(pnl))
+        ));
+      });
+    }
+  }
 }
 
-function addTrade(data) {
-  // Capture and normalize fields
-  const trade = {
+/* -------- Mutators -------- */
+function addPosition(data) {
+  // Creates a new position with first execution
+  const action = data.side === 'short' ? 'sell' : 'buy';
+  const exec = {
+    id: uid(), action,
+    qty: +data.qty, price: +data.price,
+    date: data.date || todayKey(),
+    fees: +data.fees || 0,
+    note: ''
+  };
+  const pos = {
     id: uid(),
-    market: data.market || 'stock',
     symbol: (data.symbol || '').trim().toUpperCase(),
+    market: data.market || 'stock',
     side: data.side || 'long',
-    qty: data.qty !== '' && data.qty != null ? +data.qty : null,
-    entry: data.entry !== '' && data.entry != null ? +data.entry : null,
-    exit: data.exit !== '' && data.exit != null ? +data.exit : null,
+    status: 'open',
+    tradeType: data.tradeType || 'swing',
+    theme: (data.theme || '').trim(),
+    executions: [exec],
     stop: data.stop !== '' && data.stop != null ? +data.stop : null,
     target: data.target !== '' && data.target != null ? +data.target : null,
-    fees: data.fees !== '' && data.fees != null ? +data.fees : 0,
-    openDate: data.openDate || todayKey(),
-    closeDate: data.closeDate || (data.exit !== '' && data.exit != null ? todayKey() : null),
+    tags: (data.tags || '').split(',').map(s => s.trim()).filter(Boolean),
+    notes: (data.notes || '').trim(),
     setup: data.setup || '',
     mood: data.mood || '',
     confidence: data.confidence ? +data.confidence : 3,
-    tags: (data.tags || '').split(',').map(s => s.trim()).filter(Boolean),
-    note: (data.note || '').trim(),
     createdAt: Date.now(),
   };
-  S.trades.push(trade);
+  S.trades.push(pos);
   saveState();
   renderTrades();
 }
 
-function deleteTrade(id) {
+function addExecution(positionId, e) {
+  const p = S.trades.find(x => x.id === positionId);
+  if (!p) return;
+  p.executions = p.executions || [];
+  p.executions.push({
+    id: uid(),
+    action: e.action,
+    qty: +e.qty,
+    price: +e.price,
+    date: e.date || todayKey(),
+    fees: +e.fees || 0,
+    note: e.note || ''
+  });
+  // Re-evaluate status
+  const m = posMetrics(p);
+  p.status = m.isClosed ? 'closed' : 'open';
+  saveState();
+  renderTrades();
+}
+
+function deleteExecution(positionId, execId) {
+  const p = S.trades.find(x => x.id === positionId);
+  if (!p) return;
+  p.executions = (p.executions || []).filter(e => e.id !== execId);
+  if (p.executions.length === 0) {
+    if (confirm('No executions remain. Delete the entire position?')) {
+      S.trades = S.trades.filter(x => x.id !== positionId);
+    }
+  }
+  const m = posMetrics(p);
+  p.status = m.isClosed ? 'closed' : 'open';
+  saveState();
+  renderTrades();
+}
+
+function updatePosition(positionId, patch) {
+  const p = S.trades.find(x => x.id === positionId);
+  if (!p) return;
+  Object.assign(p, patch);
+  saveState();
+  renderTrades();
+}
+
+function deletePosition(id) {
   S.trades = S.trades.filter(t => t.id !== id);
   if (expandedTradeId === id) expandedTradeId = null;
   saveState();
   renderTrades();
 }
 
-function updateTradePreview() {
-  const entry = parseFloat($('#trEntry').value);
-  const exit = parseFloat($('#trExit').value);
-  const stop = parseFloat($('#trStop').value);
-  const target = parseFloat($('#trTarget').value);
-  const qty = parseFloat($('#trQty').value);
-  const fees = parseFloat($('#trFees').value) || 0;
-  const sideMul = $('#trSide').value === 'short' ? -1 : 1;
+function addPlan(data) {
+  S.plans = S.plans || [];
+  S.plans.push({
+    id: uid(),
+    symbol: (data.symbol || '').trim().toUpperCase(),
+    market: data.market || 'stock',
+    side: data.side || 'long',
+    entry: +data.entry || 0,
+    stop: +data.stop || 0,
+    target: data.target ? +data.target : 0,
+    riskAmt: +data.riskAmt || 0,
+    tradeType: data.tradeType || 'swing',
+    theme: (data.theme || '').trim(),
+    tags: (data.tags || '').split(',').map(s => s.trim()).filter(Boolean),
+    notes: (data.notes || '').trim(),
+    createdAt: Date.now(),
+  });
+  saveState();
+  renderTrades();
+}
 
-  let netStr = '—', rStr = '—', rrStr = '—';
-  if (!isNaN(entry) && !isNaN(exit) && !isNaN(qty)) {
-    const pnl = (exit - entry) * qty * sideMul - fees;
-    netStr = (pnl >= 0 ? '+$' : '−$') + Math.abs(pnl).toFixed(2);
-  }
-  if (!isNaN(entry) && !isNaN(stop) && entry !== stop) {
-    const risk = Math.abs(entry - stop);
-    if (!isNaN(exit)) {
-      const R = ((exit - entry) * sideMul) / risk;
-      rStr = (R >= 0 ? '+' : '') + R.toFixed(2) + 'R';
-    }
-    if (!isNaN(target)) {
-      rrStr = (Math.abs(target - entry) / risk).toFixed(2);
-    }
-  }
-  $('#trPreview').textContent = `Net P/L ${netStr} · R ${rStr} · R/R ${rrStr}`;
+function deletePlan(id) {
+  S.plans = (S.plans || []).filter(p => p.id !== id);
+  saveState();
+  renderTrades();
+}
+
+function convertPlanToPosition(planId) {
+  const pl = (S.plans || []).find(p => p.id === planId);
+  if (!pl) return;
+  const m = planMetrics(pl);
+  const qty = m.shares;
+  if (!qty) { alert('Cannot convert: plan needs entry, stop, and risk $ to compute share size.'); return; }
+  // Pre-fill the new-position form with plan values + computed qty, scroll into view
+  $('#trSymbol').value = pl.symbol;
+  $('#trMarket').value = pl.market || 'stock';
+  $('#trSide').value = pl.side || 'long';
+  $('#trQty').value = qty;
+  $('#trPrice').value = pl.entry;
+  $('#trStop').value = pl.stop;
+  $('#trTarget').value = pl.target || '';
+  $('#trTheme').value = pl.theme || '';
+  $('#trTradeType').value = pl.tradeType || 'swing';
+  $('#trTags').value = (pl.tags || []).join(', ');
+  $('#trNote').value = pl.notes || '';
+  // Switch to open tab so user sees the form
+  tradeTab = 'open';
+  renderTrades();
+  // Scroll the form into view
+  setTimeout(() => {
+    const el = $('#tradeAdd');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Highlight briefly
+    if (el) { el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1200); }
+  }, 50);
+  // Stash the plan id so we can delete it once the position is created
+  window.__planToConsume = planId;
 }
 
 // ---------------- Equity Curve ----------------
@@ -2171,53 +2785,121 @@ function wireEvents() {
   // Journal
   wireJournal();
 
-  // Trades — expanded Stonk Journal-style form
-  $('#tradeAdd').addEventListener('submit', (e) => {
+  // ---- Trade Journal: tabs ----
+  $$('[data-trade-tab]').forEach(b => {
+    b.addEventListener('click', () => {
+      tradeTab = b.dataset.tradeTab;
+      renderTrades();
+    });
+  });
+
+  // ---- New position form (also accepts pre-filled values from plan conversion) ----
+  const newPosForm = $('#tradeAdd');
+  if (newPosForm) newPosForm.addEventListener('submit', (e) => {
     e.preventDefault();
     const symbol = $('#trSymbol').value.trim();
     if (!symbol) return;
-    addTrade({
-      market: $('#trMarket').value,
+    addPosition({
       symbol,
+      market: $('#trMarket').value,
       side: $('#trSide').value,
+      tradeType: $('#trTradeType').value,
+      theme: $('#trTheme').value,
       qty: $('#trQty').value,
-      entry: $('#trEntry').value,
-      exit: $('#trExit').value,
+      price: $('#trPrice').value,
+      date: $('#trDate').value,
+      fees: $('#trFees').value,
       stop: $('#trStop').value,
       target: $('#trTarget').value,
-      fees: $('#trFees').value,
-      openDate: $('#trOpenDate').value,
-      closeDate: $('#trCloseDate').value,
-      setup: $('#trSetup').value,
-      mood: $('#trMood').value,
-      confidence: $('#trConf').value,
       tags: $('#trTags').value,
-      note: $('#trNote').value,
+      notes: $('#trNote').value,
     });
-    // Reset only the entry-specific fields
-    ['#trSymbol','#trQty','#trEntry','#trExit','#trStop','#trTarget','#trFees','#trTags','#trNote','#trOpenDate','#trCloseDate']
+    // If this came from a plan conversion, consume the plan now
+    if (window.__planToConsume) {
+      deletePlan(window.__planToConsume);
+      window.__planToConsume = null;
+    }
+    // Reset entry-specific fields
+    ['#trSymbol','#trQty','#trPrice','#trStop','#trTarget','#trFees','#trTags','#trNote','#trTheme']
       .forEach(s => { const el = $(s); if (el) el.value = ''; });
-    $('#trConf').value = 3;
-    $('#trConfVal').textContent = '3/5';
-    $('#trPreview').textContent = 'Net P/L — · R — · R/R —';
+    $('#trDate').value = todayKey();
+    if ($('#trPositionPreview')) $('#trPositionPreview').textContent = 'Cost basis — · Risk — · R/R —';
   });
 
-  // Live preview as user types prices
-  ['#trEntry','#trExit','#trStop','#trTarget','#trQty','#trFees','#trSide'].forEach(sel => {
+  // Live preview for new-position form
+  const updatePositionPreview = () => {
+    const qty = parseFloat($('#trQty').value);
+    const price = parseFloat($('#trPrice').value);
+    const stop = parseFloat($('#trStop').value);
+    const target = parseFloat($('#trTarget').value);
+    const sideMul = $('#trSide').value === 'short' ? -1 : 1;
+    let cost = '—', risk = '—', rr = '—';
+    if (!isNaN(qty) && !isNaN(price)) cost = '$' + (qty * price).toFixed(0);
+    if (!isNaN(qty) && !isNaN(price) && !isNaN(stop) && price !== stop) {
+      risk = '−$' + (Math.abs(price - stop) * qty).toFixed(0);
+    }
+    if (!isNaN(price) && !isNaN(stop) && !isNaN(target) && price !== stop) {
+      rr = (Math.abs(target - price) / Math.abs(price - stop)).toFixed(2);
+    }
+    if ($('#trPositionPreview')) $('#trPositionPreview').textContent = `Cost ${cost} · Risk ${risk} · R/R ${rr}`;
+  };
+  ['#trQty','#trPrice','#trStop','#trTarget','#trSide'].forEach(sel => {
     const el = $(sel);
-    if (el) el.addEventListener('input', updateTradePreview);
-    if (el && el.tagName === 'SELECT') el.addEventListener('change', updateTradePreview);
+    if (el) {
+      el.addEventListener('input', updatePositionPreview);
+      if (el.tagName === 'SELECT') el.addEventListener('change', updatePositionPreview);
+    }
+  });
+  // default date
+  if ($('#trDate') && !$('#trDate').value) $('#trDate').value = todayKey();
+
+  // ---- Battle Plan form ----
+  const planForm = $('#planAdd');
+  if (planForm) planForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const symbol = $('#plSymbol').value.trim();
+    if (!symbol) return;
+    addPlan({
+      symbol,
+      market: $('#plMarket').value,
+      side: $('#plSide').value,
+      entry: $('#plEntry').value,
+      stop: $('#plStop').value,
+      target: $('#plTarget').value,
+      riskAmt: $('#plRisk').value,
+      tradeType: $('#plTradeType').value,
+      theme: $('#plTheme').value,
+      tags: $('#plTags').value,
+      notes: $('#plNote').value,
+    });
+    ['#plSymbol','#plEntry','#plStop','#plTarget','#plRisk','#plTags','#plNote','#plTheme']
+      .forEach(s => { const el = $(s); if (el) el.value = ''; });
+    if ($('#plPreview')) $('#plPreview').textContent = 'Shares — · R/R — · Max loss —';
+  });
+  // Plan live preview
+  const updatePlanPreview = () => {
+    const entry = parseFloat($('#plEntry').value);
+    const stop = parseFloat($('#plStop').value);
+    const target = parseFloat($('#plTarget').value);
+    const risk = parseFloat($('#plRisk').value);
+    let shares = '—', rr = '—', ml = '—';
+    if (!isNaN(entry) && !isNaN(stop) && entry !== stop && !isNaN(risk) && risk > 0) {
+      const ps = Math.abs(entry - stop);
+      const sh = Math.floor(risk / ps);
+      shares = String(sh);
+      ml = '−$' + (ps * sh).toFixed(0);
+    }
+    if (!isNaN(entry) && !isNaN(stop) && !isNaN(target) && entry !== stop) {
+      rr = (Math.abs(target - entry) / Math.abs(entry - stop)).toFixed(2);
+    }
+    if ($('#plPreview')) $('#plPreview').textContent = `Shares ${shares} · R/R ${rr} · Max loss ${ml}`;
+  };
+  ['#plEntry','#plStop','#plTarget','#plRisk'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('input', updatePlanPreview);
   });
 
-  // Confidence slider value display
-  const trConf = $('#trConf');
-  if (trConf) {
-    trConf.addEventListener('input', () => {
-      $('#trConfVal').textContent = `${trConf.value}/5`;
-    });
-  }
-
-  // Trade filter pills
+  // ---- Filters ----
   $$('[data-trade-filter]').forEach(p => {
     p.addEventListener('click', () => {
       $$('[data-trade-filter]').forEach(x => x.classList.remove('active'));
@@ -2226,12 +2908,31 @@ function wireEvents() {
       renderTrades();
     });
   });
+  $$('[data-closed-range]').forEach(p => {
+    p.addEventListener('click', () => {
+      $$('[data-closed-range]').forEach(x => x.classList.remove('active'));
+      p.classList.add('active');
+      closedRange = p.dataset.closedRange;
+      renderTrades();
+    });
+  });
+  const tsDim = $('#tsDim');
+  if (tsDim) tsDim.addEventListener('change', renderTrades);
 
-  // Trade search
+  // ---- Trade search ----
   const trSearch = $('#trSearch');
   if (trSearch) trSearch.addEventListener('input', () => {
     tradeSearch = trSearch.value.trim();
     renderTrades();
+  });
+
+  // ---- True Equity NAV input ----
+  const navInput = $('#teNavInput');
+  if (navInput) navInput.addEventListener('input', () => {
+    const v = parseFloat(navInput.value);
+    S.equity.nav = isNaN(v) ? 0 : v;
+    saveState();
+    renderTrueEquity();
   });
 
   // ---- Equity Curve ----
