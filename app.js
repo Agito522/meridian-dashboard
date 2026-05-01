@@ -1865,9 +1865,9 @@ function initTheme() {
   });
 }
 
-// ---------------- Skin picker (Diablo / D&D / Castlevania) ----------------
+// ---------------- Skin picker (Diablo / D&D / Castlevania / EVA) ----------------
 function initSkin() {
-  const VALID = ['diablo', 'dnd', 'castlevania'];
+  const VALID = ['diablo', 'dnd', 'castlevania', 'eva'];
   const saved = (function () {
     try {
       const s = localStorage.getItem('meridian_skin');

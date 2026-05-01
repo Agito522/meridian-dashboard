@@ -2815,6 +2815,146 @@ input:focus, select:focus, textarea:focus {
   --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.18 0 0 0 0 0.10 0 0 0 0 0.25 0 0 0 0.08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
 }
 
+/* ---------- EVA — Neon Genesis Evangelion / NERV terminal ----------
+   EVA-01 deep violet armor + iconic NERV/AT-Field lime green.
+   Sci-fi mono display (Orbitron) with JetBrains Mono technical body.
+   Light mode = NERV lab (pale ivory). Dark mode = MAGI terminal (true black). */
+[data-skin="eva"] {
+  --font-display: 'Orbitron', 'JetBrains Mono', 'Inter', sans-serif;
+  --font-script:  'Orbitron', 'JetBrains Mono', 'Inter', sans-serif;
+  --font-mono:    'JetBrains Mono', ui-monospace, 'Courier New', monospace;
+}
+
+[data-skin="eva"][data-theme="light"],
+[data-skin="eva"]:not([data-theme="dark"]) {
+  /* NERV lab — sterile pale ivory with violet+green accents */
+  --bg: #f0eef5;                       /* lab off-white with cool tint */
+  --surface: #f6f4fa;
+  --surface-2: #fbfafd;
+  --surface-offset: #e6e2ee;
+  --border: #b8a8d4;
+  --divider: #d4c8e3;
+
+  --text: #1a0e2e;                     /* deep EVA armor violet on white */
+  --text-muted: #5d4a82;
+  --text-faint: #8e7eaf;
+  --text-inverse: #f6f4fa;
+
+  --primary: #5a2a82;                  /* EVA-01 deep purple armor */
+  --primary-soft: #ddc9ec;
+  --primary-hover: #6f3ba0;
+  --primary-tint: rgba(90, 42, 130, 0.12);
+
+  --accent: #4a8f1a;                   /* NERV lime (darker for light bg WCAG) */
+  --accent-soft: #d8edbf;
+
+  --success: #4a8f1a;                  /* same NERV green as accent */
+  --success-soft: #d8edbf;
+  --danger:  #c41e3a;                  /* AT-Field warning red */
+  --danger-soft: #f3cdd2;
+  --warn:    #d68a17;                  /* PATTERN ORANGE */
+  --warn-soft: #f4dfb8;
+  --info:    #2a6db4;                  /* MAGI blue indicator */
+  --info-soft: #cddff0;
+
+  --peak-bg: #ddc9ec;                  /* EVA active state */
+  --peak-text: #5a2a82;
+  --market-bg: #d8edbf;                /* NERV active */
+  --market-text: #2e5e0d;
+  --rest-bg: #e6e2ee;
+  --rest-text: #5d4a82;
+
+  --shadow-sm: 0 1px 2px rgba(45, 20, 70, 0.15);
+  --shadow-md: 0 4px 14px rgba(45, 20, 70, 0.18);
+  --shadow-lg: 0 18px 50px rgba(45, 20, 70, 0.22);
+
+  --glow-top: rgba(90, 42, 130, 0.10);
+  --glow-bottom: rgba(74, 143, 26, 0.10);
+  --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.65' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.35 0 0 0 0 0.16 0 0 0 0 0.51 0 0 0 0.05 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+[data-skin="eva"][data-theme="dark"] {
+  /* MAGI terminal — deep black with EVA-01 violet + NERV neon green */
+  --bg: #08060d;                       /* MAGI terminal black */
+  --surface: #110c1a;
+  --surface-2: #1a1226;
+  --surface-offset: #0d0814;
+  --border: #432a6e;
+  --divider: #2a1a47;
+
+  --text: #d8e8c2;                     /* faintly green-tinted readout */
+  --text-muted: #8a7aaf;
+  --text-faint: #5a4a7a;
+  --text-inverse: #08060d;
+
+  --primary: #8a4dd6;                  /* EVA-01 active armor glow */
+  --primary-soft: #2a1142;
+  --primary-hover: #a065ee;
+  --primary-tint: rgba(138, 77, 214, 0.20);
+
+  --accent: #94e225;                   /* AT-Field / NERV neon green */
+  --accent-soft: #1f3508;
+
+  --success: #94e225;                  /* iconic NERV lime */
+  --success-soft: #1f3508;
+  --danger:  #ff3a4f;                  /* PATTERN BLUE warning red */
+  --danger-soft: #3a0810;
+  --warn:    #f0a020;                  /* PATTERN ORANGE alert */
+  --warn-soft: #3a2408;
+  --info:    #5fa8e0;                  /* MAGI display blue */
+  --info-soft: #0a1d33;
+
+  --peak-bg: #2a1142;                  /* EVA active state */
+  --peak-text: #c89aff;
+  --market-bg: #1f3508;                /* NERV display panel */
+  --market-text: #b4f04a;
+  --rest-bg: #110c1a;
+  --rest-text: #8a7aaf;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.85);
+  --shadow-md: 0 6px 20px rgba(0, 0, 0, 0.88);
+  --shadow-lg: 0 24px 60px rgba(0, 0, 0, 0.95), 0 0 90px rgba(138, 77, 214, 0.18);
+
+  --glow-top: rgba(138, 77, 214, 0.22);
+  --glow-bottom: rgba(148, 226, 37, 0.12);
+  --noise-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.40 0 0 0 0 0.20 0 0 0 0 0.55 0 0 0 0.06 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* EVA skin — NERV terminal flair: hex-grid surface accent on cards */
+[data-skin="eva"] .card {
+  background-image:
+    linear-gradient(var(--surface), var(--surface)),
+    repeating-linear-gradient(60deg, transparent 0 18px, color-mix(in srgb, var(--accent) 4%, transparent) 18px 19px),
+    repeating-linear-gradient(-60deg, transparent 0 18px, color-mix(in srgb, var(--primary) 4%, transparent) 18px 19px);
+  background-blend-mode: normal, normal, normal;
+  background-size: 100% 100%, 100% 100%, 100% 100%;
+}
+[data-skin="eva"] .card::before {
+  /* Top edge accent bar — split violet | green like a NERV readout */
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, var(--primary) 0%, var(--primary) 50%, var(--accent) 50%, var(--accent) 100%);
+  opacity: 0.55;
+  pointer-events: none;
+}
+[data-skin="eva"] .card { position: relative; }
+[data-skin="eva"] h1,
+[data-skin="eva"] h2,
+[data-skin="eva"] h3,
+[data-skin="eva"] .card-title,
+[data-skin="eva"] .topbar-title {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+[data-skin="eva"][data-theme="dark"] .topbar-title {
+  text-shadow: 0 0 12px color-mix(in srgb, var(--primary) 50%, transparent);
+}
+
 /* Skin picker UI — segmented control in topbar */
 .skin-picker {
   display: inline-flex;
