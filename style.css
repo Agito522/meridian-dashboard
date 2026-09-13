@@ -331,6 +331,7 @@ textarea { resize: vertical; }
 .journal-card { grid-column: span 5; }
 .equity-card  { grid-column: span 12; }
 .handbook-card { grid-column: span 12; }
+.jlaw-card    { grid-column: span 12; }
 .trade-card   { grid-column: span 12; }
 .subs-card    { grid-column: span 12; }
 .skills-card  { grid-column: span 12; }
@@ -1773,6 +1774,347 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 720px) {
   .hb-controls { flex-wrap: wrap; }
   .hb-mark { font-size: 60px; }
+}
+
+/* ============ J.LAW DAILY TRADING ROUTINE ============ */
+.jlaw-card {
+  scroll-margin-top: 96px;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(183,132,40,0.08), transparent 42%),
+    radial-gradient(circle at 100% 100%, rgba(12,107,114,0.07), transparent 48%),
+    var(--surface);
+  position: relative;
+  overflow: hidden;
+}
+.jlaw-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(135deg, transparent 0 20px, rgba(183,132,40,0.02) 20px 21px);
+  pointer-events: none;
+}
+.jlaw-card > * { position: relative; }
+
+.jlaw-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.jlaw-date {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.jlaw-pill {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--border));
+  white-space: nowrap;
+}
+.jlaw-pill.jlaw-streak { color: var(--text); }
+.jlaw-done-badge {
+  background: var(--success-soft);
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, var(--border));
+}
+
+.jlaw-progress-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: var(--space-5);
+  align-items: end;
+  margin-bottom: var(--space-4);
+}
+@media (max-width: 720px) {
+  .jlaw-progress-row { grid-template-columns: 1fr; }
+}
+
+.jlaw-day-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.jlaw-bar {
+  height: 7px;
+  background: var(--surface-offset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.jlaw-bar > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), color-mix(in srgb, var(--primary) 60%, var(--success)));
+  border-radius: inherit;
+  transition: width 0.28s ease;
+}
+.jlaw-bar.complete > i { background: var(--success); }
+
+.jlaw-week {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 42px;
+  padding: 0 2px 2px;
+}
+.jlaw-week-col {
+  width: 11px;
+  height: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+}
+.jlaw-week-col > i {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 0%;
+  background: var(--primary);
+  opacity: 0.85;
+}
+.jlaw-week-col.done > i { background: var(--success); }
+.jlaw-week-col.today { outline: 1px solid var(--primary); outline-offset: 1px; }
+.jlaw-week-col[title] { cursor: default; }
+
+.jlaw-constraints {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--space-5);
+}
+.jlaw-chip {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-offset);
+  color: var(--text-muted);
+  border: 1px dashed var(--border);
+  letter-spacing: 0.01em;
+}
+
+.jlaw-support {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.jlaw-support-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-3);
+}
+.jlaw-support-grid .field-wide { grid-column: span 2; }
+.jlaw-support textarea {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  min-height: 72px;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+}
+.jlaw-mode { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 700px) {
+  .jlaw-support-grid { grid-template-columns: 1fr; }
+  .jlaw-support-grid .field-wide { grid-column: span 1; }
+}
+
+.jlaw-phases {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+}
+@media (max-width: 980px) {
+  .jlaw-phases { grid-template-columns: 1fr; }
+}
+
+.jlaw-phase {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.jlaw-phase-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.jlaw-phase-title {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1.25;
+}
+.jlaw-phase-title .jlaw-zh {
+  display: block;
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.jlaw-phase-count {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.jlaw-phase .jlaw-bar { margin-bottom: var(--space-3); }
+
+.jlaw-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.jlaw-check-list li label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 6px;
+  transition: background 0.15s ease;
+}
+.jlaw-check-list li label:hover { background: var(--primary-tint); }
+.jlaw-check-list input[type="checkbox"] {
+  margin-top: 3px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+.jlaw-check-list input:checked ~ span {
+  color: var(--text-muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--primary);
+  text-decoration-thickness: 1px;
+}
+
+.jlaw-mra {
+  margin-bottom: var(--space-5);
+  padding: var(--space-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.jlaw-mra-head { margin-bottom: var(--space-3); }
+.jlaw-mra-title {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.jlaw-mra-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+}
+@media (max-width: 800px) {
+  .jlaw-mra-grid { grid-template-columns: 1fr; }
+}
+
+.jlaw-rules {
+  margin-bottom: var(--space-5);
+  padding: 14px 16px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+}
+.jlaw-rules summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jlaw-rules summary::-webkit-details-marker { display: none; }
+.jlaw-rules summary::before {
+  content: "▸";
+  color: var(--primary);
+  transition: transform 0.2s ease;
+  display: inline-block;
+}
+.jlaw-rules[open] summary::before { transform: rotate(90deg); }
+.jlaw-rules-list {
+  margin: 12px 0 0;
+  padding: 0 0 0 1.2em;
+  columns: 2;
+  column-gap: var(--space-6);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.jlaw-rules-list li {
+  break-inside: avoid;
+  margin-bottom: 8px;
+  padding-left: 4px;
+}
+.jlaw-rules-list li::marker { color: var(--primary); font-weight: 700; }
+@media (max-width: 720px) {
+  .jlaw-rules-list { columns: 1; }
+}
+
+.jlaw-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.jlaw-card .btn-primary:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+}
+.jlaw-disclaimer {
+  margin-top: var(--space-4);
+  font-size: 11px;
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+}
+
+[data-skin="eva"] .jlaw-card {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+[data-skin="castlevania"] .jlaw-chip {
+  border-style: solid;
 }
 
 /* ============ SUBSCRIPTIONS ============ */

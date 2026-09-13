@@ -2073,6 +2073,367 @@ function wireHandbook() {
   });
 }
 
+// ---------------- J.Law Daily Trading Routine ----------------
+// Isolated store — wipe does not touch meridian_v1.
+const JLAW_STORE_KEY = 'meridian.jlawRoutine.v1';
+const JLAW_COMPLETE_PCT = 80;
+
+const JLAW_PHASES = [
+  {
+    id: 'pre',
+    num: '1',
+    title: 'Pre-open',
+    zh: '開市前準備',
+    items: [
+      { id: 'po-1', en: 'Check open positions — adjust stop orders' },
+      { id: 'po-2', en: 'Review overnight US action + US futures' },
+      { id: 'po-3', en: 'Pre-HK open: overnight futures + IG Hang Seng quote', hkOnly: true },
+      { id: 'po-4', en: 'If no major adverse tape, place Buy Stop orders for planned names + stops' },
+      { id: 'po-5', en: 'If orders already live, review price action — cancel or retune triggers' },
+      { id: 'po-6', en: 'Mental rehearsal: best case & worst case reactions' },
+    ],
+  },
+  {
+    id: 'ses',
+    num: '2',
+    title: 'Session',
+    zh: '交易時段',
+    items: [
+      { id: 'se-1', en: 'No improvisational buys' },
+      { id: 'se-2', en: 'Only discretionary add if a tracked alert fires AND price action is excellent' },
+      { id: 'se-3', en: 'Otherwise execute via pre-set Stop Orders only' },
+      { id: 'se-4', en: 'Scan holdings for anomalies — trim / add / stop as planned' },
+      { id: 'se-5', en: 'Scan 52-week highs — add strong volume leaders to watchlist' },
+      { id: 'se-6', en: 'Review close-tracked strength list for tape feel' },
+      { id: 'se-7', en: 'Do not stare at quotes all day; avoid financial news' },
+    ],
+  },
+  {
+    id: 'aft',
+    num: '3',
+    title: 'After close',
+    zh: '收市後',
+    items: [
+      { id: 'ac-1', en: 'Run screens (Entry System templates 1.1 / 1.3a / 1.3b)' },
+      { id: 'ac-2', en: 'File clean setups into watchlists' },
+      { id: 'ac-3', en: 'Write tomorrow’s breakout-ready names (buy-stops + stops)' },
+      { id: 'ac-4', en: 'Index health check — improving or deteriorating?' },
+      { id: 'ac-5', en: 'Position review: stops, add zones, profit targets' },
+      { id: 'ac-6', en: 'Strength-list tape review again' },
+      { id: 'ac-7', en: 'Write trade plan + update trade log + MRA' },
+    ],
+  },
+];
+
+function defaultJlawStore() {
+  return { v: 1, days: {} };
+}
+
+function defaultJlawDay() {
+  return {
+    mode: 'hkus',
+    maxRisk: '',
+    candidates: '',
+    rehearsal: '',
+    mra: { measure: '', review: '', adjust: '' },
+    checks: {},
+    markedComplete: false,
+  };
+}
+
+let JLAW = defaultJlawStore();
+
+function loadJlaw() {
+  try {
+    const raw = localStorage.getItem(JLAW_STORE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    JLAW = { v: 1, days: {} };
+    if (parsed && typeof parsed === 'object') {
+      JLAW.v = parsed.v || 1;
+      if (parsed.days && typeof parsed.days === 'object') JLAW.days = parsed.days;
+    }
+  } catch (e) { JLAW = defaultJlawStore(); }
+}
+
+function saveJlaw() {
+  try { localStorage.setItem(JLAW_STORE_KEY, JSON.stringify(JLAW)); } catch (e) {}
+}
+
+function jlawMergeDay(raw) {
+  const base = defaultJlawDay();
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    ...base,
+    ...raw,
+    mra: { ...base.mra, ...(raw.mra || {}) },
+    checks: raw.checks && typeof raw.checks === 'object' ? raw.checks : {},
+  };
+}
+
+function jlawGetDay(key, create) {
+  if (JLAW.days[key]) {
+    const merged = jlawMergeDay(JLAW.days[key]);
+    JLAW.days[key] = merged;
+    return merged;
+  }
+  if (create) {
+    JLAW.days[key] = defaultJlawDay();
+    return JLAW.days[key];
+  }
+  return null;
+}
+
+function jlawVisibleItems(day) {
+  const hk = (day && day.mode) === 'hkus';
+  return JLAW_PHASES.flatMap(ph => ph.items.filter(it => !it.hkOnly || hk));
+}
+
+function jlawProgress(day) {
+  const items = jlawVisibleItems(day);
+  const total = items.length;
+  const done = items.filter(it => day && day.checks && day.checks[it.id]).length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return { done, total, pct };
+}
+
+function jlawPhaseProgress(day, phase) {
+  const hk = (day && day.mode) === 'hkus';
+  const items = phase.items.filter(it => !it.hkOnly || hk);
+  const done = items.filter(it => day && day.checks && day.checks[it.id]).length;
+  return { done, total: items.length, pct: items.length ? Math.round((done / items.length) * 100) : 0 };
+}
+
+function jlawDayComplete(day) {
+  if (!day) return false;
+  if (day.markedComplete) return true;
+  return jlawProgress(day).pct >= JLAW_COMPLETE_PCT;
+}
+
+function jlawStreakCount() {
+  const cursor = new Date();
+  cursor.setHours(0, 0, 0, 0);
+  const today = jlawGetDay(todayKey(), false);
+  if (!jlawDayComplete(today)) cursor.setDate(cursor.getDate() - 1);
+  let n = 0;
+  for (let i = 0; i < 400; i++) {
+    const rec = jlawGetDay(dateKey(cursor), false);
+    if (jlawDayComplete(rec)) {
+      n++;
+      cursor.setDate(cursor.getDate() - 1);
+    } else break;
+  }
+  return n;
+}
+
+function jlawSetBar(el, pct, complete) {
+  if (!el) return;
+  el.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  if (el.parentElement) el.parentElement.classList.toggle('complete', !!complete);
+}
+
+function renderJlaw() {
+  const root = $('#jlawRoutine');
+  if (!root) return;
+  const key = todayKey();
+  const day = jlawGetDay(key, true);
+  const { done, total, pct } = jlawProgress(day);
+  const complete = jlawDayComplete(day);
+  const streak = jlawStreakCount();
+
+  const dateEl = $('#jlawDate');
+  if (dateEl) {
+    dateEl.textContent = new Date().toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+    });
+  }
+  const pctEl = $('#jlawDayPct');
+  if (pctEl) pctEl.textContent = pct + '%';
+  const countEl = $('#jlawDayCount');
+  if (countEl) countEl.textContent = `${done} / ${total}`;
+  jlawSetBar($('#jlawDayBar'), pct, complete);
+  const streakEl = $('#jlawStreak');
+  if (streakEl) streakEl.textContent = streak + 'd streak';
+  const badge = $('#jlawDoneBadge');
+  if (badge) badge.hidden = !complete;
+  const hero = $('#jlawHeroPct');
+  if (hero) hero.textContent = pct;
+
+  $$('[data-jlaw-mode]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.jlawMode === day.mode);
+  });
+
+  const fill = (sel, val) => {
+    const el = $(sel);
+    if (!el || document.activeElement === el) return;
+    el.value = val == null ? '' : val;
+  };
+  fill('#jlawMaxRisk', day.maxRisk);
+  fill('#jlawCandidates', day.candidates);
+  fill('#jlawRehearsal', day.rehearsal);
+  fill('#jlawMraMeasure', day.mra.measure);
+  fill('#jlawMraReview', day.mra.review);
+  fill('#jlawMraAdjust', day.mra.adjust);
+
+  const phasesRoot = $('#jlawPhases');
+  if (phasesRoot) {
+    phasesRoot.innerHTML = '';
+    JLAW_PHASES.forEach(phase => {
+      const hk = day.mode === 'hkus';
+      const items = phase.items.filter(it => !it.hkOnly || hk);
+      const pp = jlawPhaseProgress(day, phase);
+      const bar = h('i', {});
+      bar.style.width = pp.pct + '%';
+      const list = h('ul', { class: 'jlaw-check-list' },
+        ...items.map(it => {
+          const cb = h('input', { type: 'checkbox' });
+          cb.checked = !!day.checks[it.id];
+          cb.addEventListener('change', () => {
+            const rec = jlawGetDay(todayKey(), true);
+            if (cb.checked) rec.checks[it.id] = true;
+            else delete rec.checks[it.id];
+            if (rec.markedComplete && jlawProgress(rec).pct < JLAW_COMPLETE_PCT) {
+              rec.markedComplete = false;
+            }
+            saveJlaw();
+            renderJlaw();
+          });
+          return h('li', {},
+            h('label', {}, cb, h('span', {}, it.en))
+          );
+        })
+      );
+      phasesRoot.appendChild(
+        h('div', { class: 'jlaw-phase', data: { phase: phase.id } },
+          h('div', { class: 'jlaw-phase-head' },
+            h('div', { class: 'jlaw-phase-title' },
+              `${phase.num} · ${phase.title}`,
+              h('span', { class: 'jlaw-zh' }, phase.zh)
+            ),
+            h('span', { class: 'jlaw-phase-count' }, `${pp.done}/${pp.total}`)
+          ),
+          h('div', { class: `jlaw-bar${pp.pct >= JLAW_COMPLETE_PCT ? ' complete' : ''}` }, bar),
+          list
+        )
+      );
+    });
+  }
+
+  const week = $('#jlawWeekBars');
+  if (week) {
+    week.innerHTML = '';
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      const dk = dateKey(d);
+      const rec = jlawGetDay(dk, false);
+      const p = rec ? jlawProgress(rec).pct : 0;
+      const isToday = dk === key;
+      const col = h('div', {
+        class: `jlaw-week-col${jlawDayComplete(rec) ? ' done' : ''}${isToday ? ' today' : ''}`,
+        title: `${dk} · ${p}%`,
+      }, h('i', {}));
+      col.lastChild.style.height = p + '%';
+      week.appendChild(col);
+    }
+  }
+
+  const markBtn = $('#jlawMark');
+  if (markBtn) {
+    if (day.markedComplete) {
+      markBtn.textContent = 'Completed';
+      markBtn.disabled = false;
+    } else if (pct >= JLAW_COMPLETE_PCT) {
+      markBtn.textContent = 'Mark complete';
+      markBtn.disabled = false;
+    } else {
+      markBtn.textContent = `Mark complete · ${JLAW_COMPLETE_PCT}%`;
+      markBtn.disabled = true;
+    }
+  }
+}
+
+function wireJlaw() {
+  if (!$('#jlawRoutine')) return;
+  loadJlaw();
+
+  $$('[data-jlaw-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const rec = jlawGetDay(todayKey(), true);
+      rec.mode = btn.dataset.jlawMode === 'us' ? 'us' : 'hkus';
+      saveJlaw();
+      renderJlaw();
+    });
+  });
+
+  const bind = (sel, write) => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      write(jlawGetDay(todayKey(), true), el.value);
+      saveJlaw();
+    });
+  };
+  bind('#jlawMaxRisk', (d, v) => { d.maxRisk = v; });
+  bind('#jlawCandidates', (d, v) => { d.candidates = v; });
+  bind('#jlawRehearsal', (d, v) => { d.rehearsal = v; });
+  bind('#jlawMraMeasure', (d, v) => { d.mra.measure = v; });
+  bind('#jlawMraReview', (d, v) => { d.mra.review = v; });
+  bind('#jlawMraAdjust', (d, v) => { d.mra.adjust = v; });
+
+  $('#jlawExport')?.addEventListener('click', () => {
+    const key = todayKey();
+    const day = jlawGetDay(key, true);
+    const payload = {
+      date: key,
+      source: JLAW_STORE_KEY,
+      ...day,
+      progress: jlawProgress(day),
+      streak: jlawStreakCount(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `jlaw-routine-${key}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  $('#jlawReset')?.addEventListener('click', () => {
+    if (!confirm('Reset today’s J.Law checks? Notes and MRA are kept.')) return;
+    const rec = jlawGetDay(todayKey(), true);
+    rec.checks = {};
+    rec.markedComplete = false;
+    saveJlaw();
+    renderJlaw();
+  });
+
+  $('#jlawMark')?.addEventListener('click', () => {
+    const rec = jlawGetDay(todayKey(), true);
+    const { pct } = jlawProgress(rec);
+    if (rec.markedComplete) {
+      rec.markedComplete = false;
+    } else if (pct >= JLAW_COMPLETE_PCT) {
+      rec.markedComplete = true;
+    } else {
+      return;
+    }
+    saveJlaw();
+    renderJlaw();
+  });
+
+  $('#jlawWipe')?.addEventListener('click', () => {
+    if (!confirm('Wipe all J.Law Daily Routine data? Other Meridian data is untouched.')) return;
+    JLAW = defaultJlawStore();
+    try { localStorage.removeItem(JLAW_STORE_KEY); } catch (e) {}
+    renderJlaw();
+  });
+
+  renderJlaw();
+}
+
 // ---------------- Subscriptions ----------------
 // FX rates anchored to USD (approx, April 2026). User-editable in code.
 // CNY ~ 7.20 per USD; HKD ~ 7.80 per USD.
@@ -3003,6 +3364,7 @@ function renderAll() {
   renderHabits();
   renderReminders();
   renderJournal();
+  renderJlaw();
   renderTrades();
   renderEquity();
   renderSubscriptions();
@@ -3430,6 +3792,7 @@ function wireQuickActions() {
       const targets = {
         task:    '#taskTitle',
         plan:    '#plSymbol',
+        routine: '#jlawRoutine',
         habit:   '#habitName',
         journal: '[data-j="wins"]',
         idea:    '#noteTitle',
@@ -3439,11 +3802,18 @@ function wireQuickActions() {
       if (!sel) return;
       const el = document.querySelector(sel);
       if (!el) return;
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.scrollIntoView({ behavior: 'smooth', block: action === 'routine' ? 'start' : 'center' });
       // Switch trade tab if needed
       if (action === 'plan') {
         const planTab = document.querySelector('[data-trade-tab="plan"]');
         if (planTab) planTab.click();
+      }
+      if (action === 'routine') {
+        setTimeout(() => {
+          const firstOpen = el.querySelector('.jlaw-check-list input:not(:checked)');
+          try { (firstOpen || $('#jlawCandidates') || el).focus(); } catch (e) {}
+        }, 400);
+        return;
       }
       setTimeout(() => { try { el.focus(); } catch (e) {} }, 400);
     });
@@ -3464,8 +3834,10 @@ function escapeHtml(s) {
 // ---------------- Init ----------------
 function init() {
   loadState();
+  loadJlaw();
   wireEvents();
   wireHandbook();
+  wireJlaw();
   wireSubscriptions();
   wireSkills();
   wireBooks();
