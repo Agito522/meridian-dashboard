@@ -12,6 +12,7 @@ A personal life management dashboard built around split-focus peak windows (7–
 - **Life KPIs + distribution chart** — see where your time actually goes
 - **Daily journal** — wins, lessons, tomorrow's first move (auto-saved per date)
 - **Trade log** — symbol, side, P/L, note → auto-calculates W/L, hit rate, running P/L
+- **J.Law Daily Trading Routine** — Pre-open → Session → After-close → MRA checklist, per-day notes, streak, and the 18 Winner Rules (quick-ref). Persists in `localStorage` under `meridian.jlawRoutine.v1` (wipe-routine does not touch the main `meridian_v1` store). Use the **Routine** quick-action to jump there.
 - **Dark / light themes** — toggle in the top-right
 - **Auto-save** — uses browser localStorage, plus JSON export/import for backup or cross-device transfer
 

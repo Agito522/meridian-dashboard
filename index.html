@@ -54,6 +54,7 @@
   <nav class="qa-bar" aria-label="Quick actions">
     <button class="qa-btn" data-qa="task" title="Add task"><span class="qa-ico">+</span><span>Task</span></button>
     <button class="qa-btn" data-qa="plan" title="Add trade battle plan"><span class="qa-ico">+</span><span>Plan</span></button>
+    <button class="qa-btn" data-qa="routine" title="Jump to J.Law daily routine"><span class="qa-ico">⚔</span><span>Routine</span></button>
     <button class="qa-btn" data-qa="habit" title="Tick today's habits"><span class="qa-ico">✓</span><span>Habit tick</span></button>
     <button class="qa-btn" data-qa="journal" title="Jump to journal"><span class="qa-ico">✎</span><span>Journal</span></button>
     <button class="qa-btn" data-qa="idea" title="Capture idea"><span class="qa-ico">✸</span><span>Idea</span></button>
@@ -79,6 +80,10 @@
           <div class="stat">
             <div class="stat-label">Week progress</div>
             <div class="stat-value"><span id="weekPct">0</span><span class="stat-unit">%</span></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">JLaw routine</div>
+            <div class="stat-value"><span id="jlawHeroPct">0</span><span class="stat-unit">%</span></div>
           </div>
         </div>
       </div>
@@ -309,6 +314,120 @@
           <li><label><input type="checkbox" data-hb-check="risk"><span><strong>風險管理</strong> · 財務停損已設？頭寸是否符合當前戰績規模？</span></label></li>
         </ul>
       </details>
+    </section>
+
+    <!-- ============ J.LAW DAILY TRADING ROUTINE ============ -->
+    <section class="card jlaw-card" id="jlawRoutine">
+      <div class="card-head">
+        <div>
+          <h2 class="card-title">J.Law Daily Trading Routine</h2>
+          <p class="card-sub">Pre-open → Session → After-close → MRA · operational checklist</p>
+        </div>
+        <div class="jlaw-head-meta">
+          <span class="jlaw-date" id="jlawDate">—</span>
+          <span class="jlaw-pill" id="jlawDayPct">0%</span>
+          <span class="jlaw-pill jlaw-streak" id="jlawStreak">0d streak</span>
+          <span class="jlaw-pill jlaw-done-badge" id="jlawDoneBadge" hidden>Complete</span>
+        </div>
+      </div>
+
+      <div class="jlaw-progress-row">
+        <div class="jlaw-day-bar-wrap">
+          <div class="jlaw-day-bar-label">
+            <span>Day progress</span>
+            <span id="jlawDayCount">0 / 0</span>
+          </div>
+          <div class="jlaw-bar" aria-hidden="true"><i id="jlawDayBar"></i></div>
+        </div>
+        <div class="jlaw-week" id="jlawWeekBars" title="Last 7 days"></div>
+      </div>
+
+      <div class="jlaw-constraints" aria-label="Soft constraints">
+        <span class="jlaw-chip">No averaging down</span>
+        <span class="jlaw-chip">No chase &gt;5% above breakout</span>
+        <span class="jlaw-chip">Every trade has a stop</span>
+        <span class="jlaw-chip">R:R ≥ 2:1</span>
+        <span class="jlaw-chip">Avoid news noise</span>
+      </div>
+
+      <div class="jlaw-support">
+        <div class="jlaw-support-grid">
+          <div class="field">
+            <label>Market mode</label>
+            <div class="jlaw-mode" role="radiogroup" aria-label="Market mode">
+              <button type="button" class="pill" data-jlaw-mode="us">US</button>
+              <button type="button" class="pill active" data-jlaw-mode="hkus">HK+US</button>
+            </div>
+          </div>
+          <div class="field">
+            <label for="jlawMaxRisk">Max new risk today <span class="helper">% equity</span></label>
+            <input id="jlawMaxRisk" type="number" step="0.1" min="0" max="100" placeholder="e.g. 1.0" />
+          </div>
+          <div class="field field-wide">
+            <label for="jlawCandidates">Buy-stop / watch candidates</label>
+            <textarea id="jlawCandidates" rows="3" placeholder="Names, triggers, stops — tomorrow’s breakout-ready list lives here too."></textarea>
+          </div>
+          <div class="field field-wide">
+            <label for="jlawRehearsal">Mental rehearsal · best / worst case</label>
+            <textarea id="jlawRehearsal" rows="3" placeholder="Best case reaction · worst case reaction · what you will actually do."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="jlaw-phases" id="jlawPhases"></div>
+
+      <div class="jlaw-mra">
+        <div class="jlaw-mra-head">
+          <h3 class="jlaw-mra-title">MRA</h3>
+          <p class="card-sub">Measure · Review · Adjust — after-close closeout</p>
+        </div>
+        <div class="jlaw-mra-grid">
+          <div class="jsec">
+            <label for="jlawMraMeasure">Measure</label>
+            <textarea id="jlawMraMeasure" rows="3" placeholder="What happened vs the plan? Fills, stops, tape."></textarea>
+          </div>
+          <div class="jsec">
+            <label for="jlawMraReview">Review</label>
+            <textarea id="jlawMraReview" rows="3" placeholder="Process grade — not P/L. Where did you obey / break rules?"></textarea>
+          </div>
+          <div class="jsec">
+            <label for="jlawMraAdjust">Adjust</label>
+            <textarea id="jlawMraAdjust" rows="3" placeholder="One concrete change for tomorrow."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <details class="jlaw-rules">
+        <summary>18 Winner Rules · J.Law The 18 Rules</summary>
+        <ol class="jlaw-rules-list">
+          <li>Every trade must have a stop.</li>
+          <li>Keep losses smaller than typical wins framing.</li>
+          <li>Never average down.</li>
+          <li>Don’t over-analyze until you can’t act.</li>
+          <li>Don’t let a fat winner turn into a loser.</li>
+          <li>Missing 10 opportunities won’t ruin long-term returns; one major error can.</li>
+          <li>Review positions daily through a risk/reward lens.</li>
+          <li>Don’t chase more than 5% above the breakout point.</li>
+          <li>Don’t insist on selling the exact top.</li>
+          <li>Buy leaders in strong groups.</li>
+          <li>Reject low-quality selection (tips, media, wishful thinking, junk names).</li>
+          <li>Use margin carefully.</li>
+          <li>Long new highs; short new lows (when shorting).</li>
+          <li>The market is never wrong; opinions often are.</li>
+          <li>You won’t always be right — accept losses.</li>
+          <li>Focus on long-term stable expectancy; &lt;50% win rate can still win with risk management.</li>
+          <li>Keep reward:risk typically above 2:1.</li>
+          <li>Obey discipline — don’t constantly change style.</li>
+        </ol>
+      </details>
+
+      <div class="jlaw-actions">
+        <button type="button" class="btn-ghost" id="jlawExport">Export today JSON</button>
+        <button type="button" class="btn-ghost" id="jlawReset">Reset today checks</button>
+        <button type="button" class="btn-primary" id="jlawMark" disabled>Mark complete</button>
+        <button type="button" class="btn-ghost danger" id="jlawWipe">Wipe routine data</button>
+      </div>
+      <p class="jlaw-disclaimer">Personal process coaching — not investment advice. Research &amp; process only.</p>
     </section>
 
     <!-- ============ EQUITY CURVE ============ -->
