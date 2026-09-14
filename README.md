@@ -64,7 +64,7 @@ meridian-dashboard/
 The Peak window timeline is editable in the dashboard — no code changes needed.
 
 1. Click **✎** on a block (or click its segment on the 24-hour ribbon) to change start/end, label, type (`peak` / `market` / `rest`), and description.
-2. Use **Add block** under the cards to insert a new window. Changing start/end repositions it on the ribbon (sorted by time). End at `00:00` means midnight (`24:00`).
+2. Use **Add block** under the cards to insert a new window. Changing start/end repositions it on the ribbon (sorted by time). Times are `HH:MM` (`24:00` = midnight).
 3. **Reset to default** restores the shipped HK + US rhythm (7–9:30 AM deep work plus 9 PM–12 AM US focus, with HK market sessions in between).
 
 Edits persist on `schedule` inside the main `meridian_v1` localStorage object (`null` = still on defaults). They round-trip with **Export JSON** / **Import JSON**. The J.Law routine store (`meridian.jlawRoutine.v1`) is separate and untouched.

@@ -824,6 +824,13 @@ textarea { resize: vertical; }
   align-items: center;
 }
 .block-edit-form input[type="text"] { min-width: 0; }
+.sched-add input[type="text"] { min-width: 0; font-variant-numeric: tabular-nums; }
+.block-edit-form input[placeholder="HH:MM"],
+.sched-add #schedStart,
+.sched-add #schedEnd {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
 .block-edit-actions {
   grid-column: 1 / -1;
   display: flex;

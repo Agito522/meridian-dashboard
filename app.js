@@ -235,27 +235,25 @@ function typeLabel(type) {
 }
 
 function parseTimeToHour(val) {
-  if (!val) return null;
-  const parts = String(val).split(':');
-  const hh = Number(parts[0]);
-  const mm = Number(parts[1] || 0);
-  if (!Number.isFinite(hh) || !Number.isFinite(mm)) return null;
+  if (val == null || val === '') return null;
+  const raw = String(val).trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || mm > 59) return null;
+  if (hh === 24 && mm === 0) return 24;
+  if (hh < 0 || hh > 23) return null;
   return hh + mm / 60;
 }
 
 function hourToTimeInput(hour) {
-  if (hour >= 24) return '00:00';
-  let hh = Math.floor(hour);
-  let mm = Math.round((hour - hh) * 60);
-  if (mm === 60) { hh += 1; mm = 0; }
-  if (hh >= 24) return '00:00';
-  return `${pad(hh)}:${pad(mm)}`;
+  return fmtHour(hour);
 }
 
 function resolveEndHour(startH, endTimeVal) {
-  let endH = parseTimeToHour(endTimeVal);
+  const endH = parseTimeToHour(endTimeVal);
   if (endH == null) return null;
-  if (endH === 0 && startH > 0) endH = 24;
   return endH;
 }
 
@@ -487,7 +485,7 @@ function renderTimeline() {
     } else if (!list.length) {
       hint.textContent = 'Empty custom schedule. Add a block, or Reset to default.';
     } else {
-      hint.textContent = 'Custom schedule. Changing start/end repositions the ribbon. End at 00:00 means midnight.';
+      hint.textContent = 'Custom schedule. Changing start/end repositions the ribbon. Use 24:00 for midnight.';
     }
   }
 
@@ -549,8 +547,8 @@ function renderScheduleEditor(b, i) {
   };
 
   const form = h('form', { class: 'block-edit-form', onSubmit: (e) => { e.preventDefault(); commit(); } },
-    h('input', { id: startId, type: 'time', step: '60', value: hourToTimeInput(b.start), 'aria-label': 'Start time', required: 'true' }),
-    h('input', { id: endId, type: 'time', step: '60', value: hourToTimeInput(b.end), 'aria-label': 'End time', required: 'true' }),
+    h('input', { id: startId, type: 'text', inputmode: 'numeric', maxlength: '5', value: hourToTimeInput(b.start), placeholder: 'HH:MM', 'aria-label': 'Start time (HH:MM)', required: 'true' }),
+    h('input', { id: endId, type: 'text', inputmode: 'numeric', maxlength: '5', value: hourToTimeInput(b.end), placeholder: 'HH:MM', 'aria-label': 'End time (HH:MM)', title: 'Use 24:00 for midnight', required: 'true' }),
     h('select', { id: typeId, 'aria-label': 'Block type' },
       ...SCHEDULE_TYPES.map(t => {
         const opt = h('option', { value: t }, typeLabel(t));

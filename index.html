@@ -136,8 +136,8 @@
 
       <p class="sched-hint" id="schedHint"></p>
       <form class="sched-add" id="schedAdd" autocomplete="off">
-        <input id="schedStart" type="time" step="60" required aria-label="Start time" />
-        <input id="schedEnd" type="time" step="60" required aria-label="End time" />
+        <input id="schedStart" type="text" inputmode="numeric" placeholder="Start HH:MM" maxlength="5" required aria-label="Start time (HH:MM)" title="Start time as HH:MM, e.g. 07:00" />
+        <input id="schedEnd" type="text" inputmode="numeric" placeholder="End HH:MM" maxlength="5" required aria-label="End time (HH:MM)" title="End time as HH:MM. Use 24:00 for midnight." />
         <select id="schedType" aria-label="Block type">
           <option value="peak">Peak</option>
           <option value="market">Market</option>
