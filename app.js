@@ -34,6 +34,7 @@ const defaultState = () => ({
   projects: [],       // { id, name, goal, deadline, area, status, createdAt }
   notes: [],          // { id, title, body, tags, linkedSymbol, createdAt, updatedAt }
   reviews: {},        // { 'YYYY-Www': { wins, losses, lessons, nextWeek } } — weekly review
+  schedule: null,     // null → default HK+US blocks; otherwise [{ id, start, end, label, type, desc }]
   lastSaved: null,
 });
 
@@ -59,6 +60,9 @@ function loadState() {
       if (!Array.isArray(S.notes)) S.notes = [];
       if (!S.reviews || typeof S.reviews !== 'object') S.reviews = {};
       if (loaded.quotes !== undefined) S.quotes = loaded.quotes;
+      S.schedule = Object.prototype.hasOwnProperty.call(loaded, 'schedule')
+        ? normalizeSchedule(loaded.schedule)
+        : null;
       // ---- Trade migration: old single-execution rows → new position shape ----
       if (Array.isArray(S.trades)) {
         S.trades = S.trades.map(t => migrateTrade(t)).filter(Boolean);
@@ -153,8 +157,11 @@ const trackMeta = (id) => TRACKS.find(t => t.id === id) || TRACKS[0];
 
 // ---------------- Daily Schedule ----------------
 /* Peak windows (HKT): 7-11 AM + 9 PM-12 AM.
-   HK market: 09:30-12:00, 13:00-16:00. US market: 21:30-04:00 HKT. */
-const SCHEDULE = [
+   HK market: 09:30-12:00, 13:00-16:00. US market: 21:30-04:00 HKT.
+   DEFAULT_SCHEDULE ships as the initial rhythm. User edits persist on
+   S.schedule inside meridian_v1 (null = still on defaults). */
+const SCHEDULE_TYPES = ['peak', 'market', 'rest'];
+const DEFAULT_SCHEDULE = [
   { start: 0,    end: 6,    label: 'Sleep · restore',         type: 'rest',   desc: 'Non-negotiable recovery block.' },
   { start: 6,    end: 7,    label: 'Wake · mindful start',    type: 'rest',   desc: 'Hydration, light, no phone.' },
   { start: 7,    end: 9.5,  label: 'Deep work · Learning',    type: 'peak',   desc: 'Algorithm dev, ESG coursework, reading.' },
@@ -166,6 +173,200 @@ const SCHEDULE = [
   { start: 21,   end: 21.5, label: 'US pre-market prep',      type: 'peak',   desc: 'Catalyst review, gappers, bias set.' },
   { start: 21.5, end: 24,   label: 'US open · deep focus',    type: 'peak',   desc: 'Pattern work, setups, decisive execution.' },
 ];
+
+let scheduleEditingId = null;
+
+function cloneDefaultSchedule() {
+  return DEFAULT_SCHEDULE.map(b => ({ ...b, id: uid() }));
+}
+
+function normalizeSchedule(raw) {
+  if (raw == null) return null;
+  if (!Array.isArray(raw)) return null;
+  const cleaned = [];
+  for (const b of raw) {
+    if (!b || typeof b !== 'object') continue;
+    const start = Number(b.start);
+    const end = Number(b.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end)) continue;
+    const s = Math.max(0, Math.min(24, start));
+    const e = Math.max(0, Math.min(24, end));
+    if (e <= s) continue;
+    const type = SCHEDULE_TYPES.includes(b.type) ? b.type : 'rest';
+    cleaned.push({
+      id: (typeof b.id === 'string' && b.id) ? b.id : uid(),
+      start: s,
+      end: e,
+      label: String(b.label || 'Untitled').slice(0, 80),
+      type,
+      desc: String(b.desc || '').slice(0, 200),
+    });
+  }
+  cleaned.sort((a, c) => a.start - c.start || a.end - c.end);
+  return cleaned;
+}
+
+function getSchedule() {
+  return Array.isArray(S.schedule) ? S.schedule : DEFAULT_SCHEDULE;
+}
+
+function isDefaultSchedule() {
+  return !Array.isArray(S.schedule);
+}
+
+function ensureCustomSchedule() {
+  if (!Array.isArray(S.schedule)) {
+    S.schedule = cloneDefaultSchedule();
+    saveState();
+  }
+  return S.schedule;
+}
+
+function sortAndPersistSchedule() {
+  if (Array.isArray(S.schedule)) {
+    S.schedule.sort((a, b) => a.start - b.start || a.end - b.end);
+  }
+  saveState();
+  renderTimeline();
+}
+
+function typeLabel(type) {
+  return type === 'peak' ? 'Peak window' : type === 'market' ? 'Market' : 'Restore';
+}
+
+function parseTimeToHour(val) {
+  if (val == null || val === '') return null;
+  const raw = String(val).trim();
+  const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  const hh = Number(m[1]);
+  const mm = Number(m[2]);
+  if (!Number.isFinite(hh) || !Number.isFinite(mm) || mm > 59) return null;
+  if (hh === 24 && mm === 0) return 24;
+  if (hh < 0 || hh > 23) return null;
+  return hh + mm / 60;
+}
+
+function hourToTimeInput(hour) {
+  return fmtHour(hour);
+}
+
+function resolveEndHour(startH, endTimeVal) {
+  const endH = parseTimeToHour(endTimeVal);
+  if (endH == null) return null;
+  return endH;
+}
+
+function fmtHumanHour(hour) {
+  if (hour === 24 || hour === 0) return '12 AM';
+  const hh = Math.floor(hour);
+  const mm = Math.round((hour - hh) * 60);
+  const ampm = hh >= 12 ? 'PM' : 'AM';
+  let h12 = hh % 12;
+  if (h12 === 0) h12 = 12;
+  return mm ? `${h12}:${pad(mm)} ${ampm}` : `${h12} ${ampm}`;
+}
+
+function peakWindowRanges() {
+  const peaks = getSchedule().filter(b => b.type === 'peak').slice().sort((a, b) => a.start - b.start);
+  const merged = [];
+  peaks.forEach(b => {
+    const last = merged[merged.length - 1];
+    if (last && b.start <= last.end) last.end = Math.max(last.end, b.end);
+    else merged.push({ start: b.start, end: b.end });
+  });
+  return merged;
+}
+
+function updateHeroPeakWindows() {
+  const el = $('#heroSub');
+  if (!el) return;
+  const ranges = peakWindowRanges();
+  if (!ranges.length) {
+    el.textContent = 'No peak windows on the timeline — add a Peak block to define one.';
+    return;
+  }
+  const text = ranges.map(r => `${fmtHumanHour(r.start)}–${fmtHumanHour(r.end)}`).join(' & ');
+  el.textContent = `Your peak windows today: ${text} HKT.`;
+}
+
+function beginEditBlock(index) {
+  const list = ensureCustomSchedule();
+  const block = list[index];
+  if (!block) return;
+  scheduleEditingId = block.id;
+  renderTimeline();
+}
+
+function saveEditedBlock(id, fields) {
+  const list = ensureCustomSchedule();
+  const block = list.find(b => b.id === id);
+  if (!block) return false;
+  if (fields.end <= fields.start) {
+    alert('End time must be after start on the same day. Split overnight blocks at midnight.');
+    return false;
+  }
+  block.start = fields.start;
+  block.end = fields.end;
+  block.label = fields.label;
+  block.type = fields.type;
+  block.desc = fields.desc;
+  scheduleEditingId = null;
+  sortAndPersistSchedule();
+  return true;
+}
+
+function deleteScheduleBlock(index) {
+  const list = ensureCustomSchedule();
+  if (!list[index]) return;
+  const label = list[index].label || 'this block';
+  if (!confirm(`Delete “${label}”?`)) return;
+  if (scheduleEditingId && list[index].id === scheduleEditingId) scheduleEditingId = null;
+  list.splice(index, 1);
+  sortAndPersistSchedule();
+}
+
+function addScheduleBlock(fields) {
+  if (fields.end <= fields.start) {
+    alert('End time must be after start on the same day. Split overnight blocks at midnight.');
+    return false;
+  }
+  ensureCustomSchedule();
+  S.schedule.push({
+    id: uid(),
+    start: fields.start,
+    end: fields.end,
+    label: fields.label,
+    type: fields.type,
+    desc: fields.desc,
+  });
+  sortAndPersistSchedule();
+  return true;
+}
+
+function resetSchedule() {
+  if (!confirm('Reset to the default HK + US schedule? Your custom blocks will be cleared.')) return;
+  S.schedule = null;
+  scheduleEditingId = null;
+  saveState();
+  renderTimeline();
+}
+
+function readScheduleFields(prefix) {
+  const startH = parseTimeToHour($(`#${prefix}Start`)?.value);
+  const endH = resolveEndHour(startH, $(`#${prefix}End`)?.value);
+  const type = $(`#${prefix}Type`)?.value;
+  const label = ($(`#${prefix}Label`)?.value || '').trim();
+  const desc = ($(`#${prefix}Desc`)?.value || '').trim();
+  if (startH == null || endH == null || !label) return null;
+  return {
+    start: startH,
+    end: endH,
+    type: SCHEDULE_TYPES.includes(type) ? type : 'rest',
+    label: label.slice(0, 80),
+    desc: desc.slice(0, 200),
+  };
+}
 
 // ---------------- Render helpers ----------------
 function h(tag, attrs = {}, ...kids) {
@@ -229,7 +430,9 @@ function tick() {
 
 // ---------------- Timeline ----------------
 function renderTimeline() {
+  const list = getSchedule();
   const tl = $('#timeline');
+  if (!tl) return;
   tl.innerHTML = '';
   // Hour labels
   const hours = h('div', { class: 'tl-hours' });
@@ -239,15 +442,18 @@ function renderTimeline() {
   tl.appendChild(hours);
 
   // Blocks — minimal labels (only when segment wide enough). Hover for details.
-  SCHEDULE.forEach((b) => {
+  list.forEach((b, i) => {
     const left = (b.start / 24) * 100;
     const w = ((b.end - b.start) / 24) * 100;
-    // Only show short typed label (PEAK / MARKET / REST) and only when there's room.
     const short = b.type === 'peak' ? 'PEAK' : b.type === 'market' ? 'MARKET' : 'REST';
     const block = h('div', {
       class: `tl-block ${b.type}`,
       style: `left:${left}%;width:${w}%;`,
-      title: `${fmtHour(b.start)}–${fmtHour(b.end)} · ${b.label}`,
+      title: `${fmtHour(b.start)}–${fmtHour(b.end)} · ${b.label} — click to edit`,
+      role: 'button',
+      tabindex: '0',
+      onClick: () => beginEditBlock(i),
+      onKeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); beginEditBlock(i); } },
     }, w > 10 ? short : '');
     tl.appendChild(block);
   });
@@ -258,18 +464,132 @@ function renderTimeline() {
 
   // Blocks list below
   const bl = $('#blocks');
+  if (!bl) return;
   bl.innerHTML = '';
-  SCHEDULE.forEach((b, i) => {
-    const el = h('div', { class: 'block', data: { idx: i } },
-      h('div', { class: 'block-time' }, `${fmtHour(b.start)}\u2009–\u2009${fmtHour(b.end)}`),
-      h('div', { class: 'block-body' },
-        h('div', { class: 'block-title' }, b.label),
-        h('div', { class: 'block-desc' }, b.desc),
-        h('span', { class: `block-tag ${b.type}` }, b.type === 'peak' ? 'Peak window' : b.type === 'market' ? 'Market' : 'Restore'),
-      )
-    );
-    bl.appendChild(el);
-  });
+  if (!list.length) {
+    bl.appendChild(h('div', { class: 'sched-empty' }, 'No schedule blocks yet — add one below, or reset to the default HK + US rhythm.'));
+  } else {
+    list.forEach((b, i) => bl.appendChild(renderScheduleBlock(b, i)));
+  }
+
+  const sub = $('#timelineSub');
+  if (sub) {
+    sub.textContent = isDefaultSchedule()
+      ? 'Split-focus rhythm · tuned to HK + US market cycles'
+      : 'Custom rhythm · saved with dashboard data';
+  }
+  const hint = $('#schedHint');
+  if (hint) {
+    if (isDefaultSchedule()) {
+      hint.textContent = 'Default HK + US schedule. Edit a card, click the ribbon, or add a block to customize — saved in meridian_v1 and included in Export JSON.';
+    } else if (!list.length) {
+      hint.textContent = 'Empty custom schedule. Add a block, or Reset to default.';
+    } else {
+      hint.textContent = 'Custom schedule. Changing start/end repositions the ribbon. Use 24:00 for midnight.';
+    }
+  }
+
+  updateHeroPeakWindows();
+  // Re-apply NOW highlight immediately (tick may be a second away)
+  try {
+    const now = new Date();
+    const hkTime = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Hong_Kong' }));
+    const hm = hkTime.getHours() + hkTime.getMinutes() / 60;
+    updateTimelineNow(hm);
+    updateActiveBlock(hm);
+  } catch (_) {}
+}
+
+function renderScheduleBlock(b, i) {
+  const editing = !!(b.id && scheduleEditingId === b.id);
+  if (editing) return renderScheduleEditor(b, i);
+
+  return h('div', { class: 'block', data: { idx: String(i) } },
+    h('div', { class: 'block-time' }, `${fmtHour(b.start)}\u2009–\u2009${fmtHour(b.end)}`),
+    h('div', { class: 'block-body' },
+      h('div', { class: 'block-title' }, b.label),
+      h('div', { class: 'block-desc' }, b.desc || ''),
+      h('div', { class: 'block-foot' },
+        h('span', { class: `block-tag ${b.type}` }, typeLabel(b.type)),
+        h('div', { class: 'block-actions' },
+          h('button', { type: 'button', class: 'icon-btn-sm', title: 'Edit block', 'aria-label': 'Edit block', onClick: () => beginEditBlock(i) }, '✎'),
+          h('button', { type: 'button', class: 'icon-btn-sm', title: 'Delete block', 'aria-label': 'Delete block', onClick: () => deleteScheduleBlock(i) }, '✕'),
+        ),
+      ),
+    ),
+  );
+}
+
+function renderScheduleEditor(b, i) {
+  const startId = `schedEditStart-${b.id}`;
+  const endId = `schedEditEnd-${b.id}`;
+  const typeId = `schedEditType-${b.id}`;
+  const labelId = `schedEditLabel-${b.id}`;
+  const descId = `schedEditDesc-${b.id}`;
+
+  const commit = () => {
+    const startH = parseTimeToHour(document.getElementById(startId)?.value);
+    const endH = resolveEndHour(startH, document.getElementById(endId)?.value);
+    const type = document.getElementById(typeId)?.value;
+    const label = (document.getElementById(labelId)?.value || '').trim();
+    const desc = (document.getElementById(descId)?.value || '').trim();
+    if (startH == null || endH == null || !label) {
+      alert('Start, end, and label are required.');
+      return;
+    }
+    saveEditedBlock(b.id, {
+      start: startH,
+      end: endH,
+      type: SCHEDULE_TYPES.includes(type) ? type : 'rest',
+      label: label.slice(0, 80),
+      desc: desc.slice(0, 200),
+    });
+  };
+
+  const form = h('form', { class: 'block-edit-form', onSubmit: (e) => { e.preventDefault(); commit(); } },
+    h('input', { id: startId, type: 'text', inputmode: 'numeric', maxlength: '5', value: hourToTimeInput(b.start), placeholder: 'HH:MM', 'aria-label': 'Start time (HH:MM)', required: 'true' }),
+    h('input', { id: endId, type: 'text', inputmode: 'numeric', maxlength: '5', value: hourToTimeInput(b.end), placeholder: 'HH:MM', 'aria-label': 'End time (HH:MM)', title: 'Use 24:00 for midnight', required: 'true' }),
+    h('select', { id: typeId, 'aria-label': 'Block type' },
+      ...SCHEDULE_TYPES.map(t => {
+        const opt = h('option', { value: t }, typeLabel(t));
+        if (t === b.type) opt.selected = true;
+        return opt;
+      })
+    ),
+    h('input', { id: labelId, type: 'text', value: b.label, maxlength: '80', placeholder: 'Label', 'aria-label': 'Label', required: 'true' }),
+    h('input', { id: descId, type: 'text', value: b.desc || '', maxlength: '200', placeholder: 'Short description', 'aria-label': 'Description' }),
+    h('div', { class: 'block-edit-actions' },
+      h('button', { type: 'submit', class: 'btn-primary' }, 'Save'),
+      h('button', { type: 'button', class: 'btn-ghost', onClick: () => { scheduleEditingId = null; renderTimeline(); } }, 'Cancel'),
+    ),
+  );
+
+  return h('div', { class: 'block editing', data: { idx: String(i) } },
+    h('div', { class: 'block-time' }, `${fmtHour(b.start)}\u2009–\u2009${fmtHour(b.end)}`),
+    h('div', { class: 'block-body' }, form),
+  );
+}
+
+function wireSchedule() {
+  const form = $('#schedAdd');
+  if (form) {
+    if ($('#schedStart') && !$('#schedStart').value) $('#schedStart').value = '12:00';
+    if ($('#schedEnd') && !$('#schedEnd').value) $('#schedEnd').value = '13:00';
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const fields = readScheduleFields('sched');
+      if (!fields) {
+        alert('Start, end, and label are required.');
+        return;
+      }
+      if (addScheduleBlock(fields)) {
+        $('#schedLabel').value = '';
+        $('#schedDesc').value = '';
+      }
+    });
+  }
+  const reset = $('#schedReset');
+  if (reset) reset.addEventListener('click', resetSchedule);
 }
 
 function fmtHour(h) {
@@ -284,9 +604,12 @@ function updateTimelineNow(hm) {
 }
 
 function updateActiveBlock(hm) {
-  $$('.block').forEach((b, i) => {
-    const s = SCHEDULE[i];
-    b.classList.toggle('active', hm >= s.start && hm < s.end);
+  const list = getSchedule();
+  $$('.block').forEach((el) => {
+    const i = Number(el.dataset.idx);
+    const s = list[i];
+    if (!s) { el.classList.remove('active'); return; }
+    el.classList.toggle('active', hm >= s.start && hm < s.end);
   });
 }
 
@@ -1874,9 +2197,9 @@ function initTheme() {
   });
 }
 
-// ---------------- Skin picker (Diablo / D&D / Castlevania / EVA) ----------------
+// ---------------- Skin picker (Diablo / D&D / Castlevania / EVA / Cyberpunk) ----------------
 function initSkin() {
-  const VALID = ['diablo', 'dnd', 'castlevania', 'eva'];
+  const VALID = ['diablo', 'dnd', 'castlevania', 'eva', 'cyberpunk'];
   const saved = (function () {
     try {
       const s = localStorage.getItem('meridian_skin');
@@ -3059,6 +3382,9 @@ function importJSON(file) {
     try {
       const data = JSON.parse(e.target.result);
       S = { ...defaultState(), ...data };
+      S.schedule = Object.prototype.hasOwnProperty.call(data, 'schedule')
+        ? normalizeSchedule(data.schedule)
+        : null;
       saveState();
       renderAll();
     } catch (err) { alert('Invalid file'); }
@@ -3842,6 +4168,7 @@ function init() {
   wireSkills();
   wireBooks();
   wireQuotes();
+  wireSchedule();
   wireInbox();
   wireProjects();
   wireReview();
