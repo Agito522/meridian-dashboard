@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>業績隱含波幅計算器 · Earnings ATM straddle — Meridian</title>
+  <meta name="description" content="C泰龍 ATM 跨式期權方法：用同一行使價的 Call + Put 權利金，一分鐘估算業績後的預期波幅與多數升跌偏向。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+TC:wght@400;500;600;700&family=Noto+Serif+TC:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="earnings-move.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='none' stroke='%23c9a14a' stroke-width='2'/%3E%3Cline x1='16' y1='4' x2='16' y2='28' stroke='%23c9a14a' stroke-width='1.5'/%3E%3Cline x1='4' y1='16' x2='28' y2='16' stroke='%23c9a14a' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23c9a14a'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="em-top">
+    <a class="em-back" href="index.html">← Meridian</a>
+    <div class="em-brand">
+      <svg class="em-logo" width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <circle cx="16" cy="16" r="14" stroke="currentColor" stroke-width="1.5" />
+        <line x1="16" y1="3" x2="16" y2="29" stroke="currentColor" stroke-width="1" />
+        <line x1="3" y1="16" x2="29" y2="16" stroke="currentColor" stroke-width="1" />
+        <circle cx="16" cy="16" r="2.5" fill="currentColor" />
+      </svg>
+      <div>
+        <div class="em-kicker">Meridian · Options</div>
+        <h1 class="em-title">1 分鐘計出業績後多數升或跌</h1>
+        <p class="em-sub">ATM 跨式隱含波幅 <span lang="en">Earnings ATM straddle implied move</span></p>
+      </div>
+    </div>
+    <p class="em-credit">方法整理自 <strong>C泰龍</strong> · 同一到期、同一行使價的 ATM Call + Put</p>
+  </header>
+
+  <main class="em-main">
+    <section class="em-card em-inputs" aria-labelledby="inputs-heading">
+      <div class="em-card-head">
+        <div>
+          <h2 id="inputs-heading">輸入參數</h2>
+          <p class="em-en">Spot, ATM strike, same-expiry call &amp; put premiums</p>
+        </div>
+        <div class="em-head-actions">
+          <button type="button" class="em-btn ghost" id="btnReset">還原 NVDA 示例</button>
+        </div>
+      </div>
+
+      <form id="emForm" autocomplete="off" novalidate>
+        <div class="em-grid">
+          <div class="em-field">
+            <label for="fSymbol">標的代碼 <span lang="en">Symbol</span></label>
+            <input id="fSymbol" name="symbol" type="text" maxlength="16" spellcheck="false" placeholder="NVDA" />
+          </div>
+          <div class="em-field">
+            <label for="fExpiry">到期日 <span lang="en">Expiry</span> <em>選填 optional</em></label>
+            <input id="fExpiry" name="expiry" type="text" maxlength="24" placeholder="e.g. 2026-02-20" />
+          </div>
+          <div class="em-field">
+            <label for="fS">現價 S <span lang="en">Spot</span></label>
+            <input id="fS" name="S" type="number" inputmode="decimal" step="any" min="0" required />
+          </div>
+          <div class="em-field">
+            <label for="fK">ATM 行使價 K <span lang="en">Strike</span></label>
+            <input id="fK" name="K" type="number" inputmode="decimal" step="any" min="0" required />
+          </div>
+          <div class="em-field">
+            <label for="fC">認購權利金 C <span lang="en">Call premium</span></label>
+            <input id="fC" name="C" type="number" inputmode="decimal" step="any" min="0" required />
+          </div>
+          <div class="em-field">
+            <label for="fP">認沽權利金 P <span lang="en">Put premium</span></label>
+            <input id="fP" name="P" type="number" inputmode="decimal" step="any" min="0" required />
+          </div>
+        </div>
+        <p class="em-hint">Call 與 Put 須為<strong>同一到期日、同一行使價</strong>。權利金由你自行從期權鏈讀入，本頁不連行情。</p>
+      </form>
+    </section>
+
+    <section class="em-card em-verdict-card" aria-labelledby="verdict-heading">
+      <div class="em-card-head">
+        <div>
+          <h2 id="verdict-heading">方向偏向</h2>
+          <p class="em-en">Hedge-value bias · 2% rule</p>
+        </div>
+        <span class="em-tag" id="exampleTag">NVDA 示例</span>
+      </div>
+      <div class="em-verdict" id="verdict" aria-live="polite">
+        <div class="em-verdict-label" id="verdictLabel">—</div>
+        <p class="em-verdict-en" id="verdictEn">—</p>
+        <p class="em-verdict-note" id="verdictNote"></p>
+      </div>
+    </section>
+
+    <section class="em-card em-range-card" aria-labelledby="range-heading">
+      <div class="em-card-head">
+        <div>
+          <h2 id="range-heading">預期價格區間</h2>
+          <p class="em-en">Symmetric range around spot</p>
+        </div>
+        <div class="em-range-meta" id="rangeMeta"></div>
+      </div>
+
+      <div class="em-stats">
+        <div class="em-stat">
+          <div class="em-stat-k">總預期波幅 <span lang="en">Total move</span></div>
+          <div class="em-stat-v" id="outMove">—</div>
+          <div class="em-stat-f" id="outMoveFormula">(C + P) / S</div>
+        </div>
+        <div class="em-stat">
+          <div class="em-stat-k">單邊半幅 <span lang="en">Half</span></div>
+          <div class="em-stat-v" id="outHalf">—</div>
+          <div class="em-stat-f" id="outHalfFormula">moveTotal / 2</div>
+        </div>
+        <div class="em-stat">
+          <div class="em-stat-k">下限 <span lang="en">Low</span></div>
+          <div class="em-stat-v" id="outLow">—</div>
+          <div class="em-stat-f">S × (1 − half)</div>
+        </div>
+        <div class="em-stat">
+          <div class="em-stat-k">上限 <span lang="en">High</span></div>
+          <div class="em-stat-v" id="outHigh">—</div>
+          <div class="em-stat-f">S × (1 + half)</div>
+        </div>
+      </div>
+
+      <div class="em-bar-wrap" id="rangeBar" aria-hidden="false">
+        <div class="em-bar-labels">
+          <span id="barLowLabel">—</span>
+          <span id="barHighLabel">—</span>
+        </div>
+        <div class="em-bar" id="barTrack">
+          <div class="em-bar-fill"></div>
+          <div class="em-marker spot" id="markSpot">
+            <span class="em-marker-pin"></span>
+            <span class="em-marker-cap" id="markSpotCap">現價</span>
+          </div>
+          <div class="em-marker strike" id="markStrike">
+            <span class="em-marker-pin"></span>
+            <span class="em-marker-cap" id="markStrikeCap">K</span>
+          </div>
+        </div>
+        <p class="em-bar-caption" id="barCaption"></p>
+      </div>
+    </section>
+
+    <section class="em-card em-hedge-card" aria-labelledby="hedge-heading">
+      <div class="em-card-head">
+        <div>
+          <h2 id="hedge-heading">內在價值與對沖價值</h2>
+          <p class="em-en">Intrinsic vs hedge (extrinsic / time value)</p>
+        </div>
+      </div>
+
+      <div class="em-hedge-grid">
+        <div class="em-hedge-col">
+          <h3>認沽 Put</h3>
+          <dl>
+            <div><dt>內在價值 Intrinsic</dt><dd id="outPutInt">—</dd></div>
+            <div><dt>對沖價值 Put hedge</dt><dd id="outPutHedge">—</dd></div>
+            <div class="em-formula"><dt>算法</dt><dd>max(K − S, 0)　→　P − 內在價值</dd></div>
+          </dl>
+        </div>
+        <div class="em-hedge-col">
+          <h3>認購 Call</h3>
+          <dl>
+            <div><dt>內在價值 Intrinsic</dt><dd id="outCallInt">—</dd></div>
+            <div><dt>對沖價值 Call hedge</dt><dd id="outCallHedge">—</dd></div>
+            <div class="em-formula"><dt>算法</dt><dd>max(S − K, 0)　→　C − 內在價值</dd></div>
+          </dl>
+        </div>
+      </div>
+
+      <div class="em-compare" id="hedgeCompare">
+        <div class="em-compare-head">
+          <span>對沖價值對比 <span lang="en">Hedge comparison</span></span>
+          <span class="em-compare-ratio" id="hedgeRatioLabel"></span>
+        </div>
+        <div class="em-compare-bars">
+          <div class="em-cbar">
+            <span class="em-cbar-name">Put</span>
+            <div class="em-cbar-track"><i id="barPut"></i></div>
+            <span class="em-cbar-val" id="barPutVal">—</span>
+          </div>
+          <div class="em-cbar">
+            <span class="em-cbar-name">Call</span>
+            <div class="em-cbar-track"><i id="barCall"></i></div>
+            <span class="em-cbar-val" id="barCallVal">—</span>
+          </div>
+        </div>
+        <p class="em-compare-rule">判定門檻：一方對沖價值 ≥ 另一方 × <strong>1.02</strong>（高出 ≥ 2%）。作者原帖明示認購偏高 → 多數升；本頁對稱實作多數跌，並標示未達門檻的均衡。</p>
+      </div>
+    </section>
+
+    <section class="em-card em-method" aria-labelledby="method-heading">
+      <details open>
+        <summary>
+          <h2 id="method-heading">方法說明</h2>
+          <span class="em-en">How the 1-minute method works</span>
+        </summary>
+        <ol class="em-steps">
+          <li>
+            <strong>總預期波幅</strong>
+            <code>moveTotal = (C + P) / S</code>
+            <span>ATM 跨式權利金佔現價的比例，即市場為該到期日定價的預期絕對波幅。</span>
+          </li>
+          <li>
+            <strong>對稱半幅與價格區間</strong>
+            <code>half = moveTotal / 2　·　low = S × (1 − half)　·　high = S × (1 + half)</code>
+            <span>把總波幅對半，得到現價上下的對稱區間。</span>
+          </li>
+          <li>
+            <strong>方向偏向（對沖價值）</strong>
+            <code>PutHedge = P − max(K − S, 0)　·　CallHedge = C − max(S − K, 0)</code>
+            <span>先剝掉價內值，比較剩下的時間價值。認購對沖 ≥ 認沽對沖 × 1.02 → <em>多數升</em>；認沽對沖 ≥ 認購對沖 × 1.02 → <em>多數跌</em>；否則 <em>均衡／無優勢</em>。作者註：兩邊價錢接近，升跌機會也接近。</span>
+          </li>
+        </ol>
+        <p class="em-timing">使用時機：作者認為<strong>約業績公布前一天</strong>讀期權鏈效果較佳。更早則時間價值偏厚，更接近公布則可能已被大幅定價。</p>
+        <p class="em-docs-link">完整算式、半幅區間、對沖價值規則與 NVDA 逐步數字已存到 GitHub：<a href="docs/earnings-atm-move.md">docs/earnings-atm-move.md</a> <span lang="en">method workings · educational paraphrase only</span></p>
+        <p class="em-nvda-note" id="nvdaNote"></p>
+      </details>
+    </section>
+
+    <aside class="em-disclaimer" role="note">
+      <strong>教育用途 · 非投資建議。</strong>
+      本頁只把你輸入的權利金套入公開的跨式估算法，不構成買賣建議、不預測單一事件結果、亦不保證與實際業績後走勢相符。期權定價含隱含波幅、skew、利率與股息；「多數升／跌」是對沖價值的 2% 經驗規則，不是勝率保證。請自行核對期權鏈報價，並承擔所有交易決策。
+    </aside>
+  </main>
+
+  <footer class="em-foot">
+    <span>Meridian · 獨立工具頁 · 不取代主儀表板</span>
+    <a href="docs/earnings-atm-move.md">方法算式 · Workings</a>
+    <a href="index.html">返回 Life Command Dashboard</a>
+  </footer>
+
+  <script src="earnings-move-calc.js"></script>
+  <script src="earnings-move.js"></script>
+</body>
+</html>
