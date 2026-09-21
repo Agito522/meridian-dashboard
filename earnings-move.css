@@ -525,11 +525,12 @@ a:hover { color: var(--primary-hover); }
   margin: 0.3rem 0;
   overflow-x: auto;
 }
-.em-timing, .em-nvda-note {
+.em-timing, .em-nvda-note, .em-docs-link {
   margin-top: 0.9rem;
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
+.em-docs-link span { color: var(--text-faint); }
 .em-nvda-note {
   background: var(--surface-2);
   border: 1px dashed var(--border);
