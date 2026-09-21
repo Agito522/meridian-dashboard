@@ -2793,6 +2793,61 @@ const PERIOD_DAYS = {
 
 let subFilter = 'all';
 let subSearch = '';
+let subEditingId = null;
+
+const NATURE_OPTIONS = [
+  ['ai', 'AI'],
+  ['office', 'Office'],
+  ['patreon', 'Patreon'],
+  ['investment', 'Investment training'],
+  ['news', 'News & media'],
+  ['cloud', 'Cloud & storage'],
+  ['entertainment', 'Entertainment'],
+  ['health', 'Health'],
+  ['other', 'Other'],
+];
+const CURRENCY_OPTIONS = [['USD', 'USD'], ['HKD', 'HKD'], ['CNY', 'CNY']];
+const PERIOD_OPTIONS = [
+  ['monthly', 'Monthly'],
+  ['quarterly', 'Quarterly'],
+  ['semiannual', 'Semi-annual'],
+  ['yearly', 'Yearly'],
+  ['weekly', 'Weekly'],
+];
+
+function subscriptionSelect(name, id, entries, current, ariaLabel) {
+  return h('select', { name, id, 'aria-label': ariaLabel },
+    ...entries.map(([value, label]) => {
+      const opt = h('option', { value }, label);
+      if (value === current) opt.selected = true;
+      return opt;
+    })
+  );
+}
+
+function subscriptionFields(data) {
+  if (!data || !data.name || data.fee == null || data.fee === '') return null;
+  const name = String(data.name).trim();
+  if (!name) return null;
+  return {
+    name,
+    nature: data.nature || 'other',
+    fee: parseFloat(data.fee) || 0,
+    currency: data.currency || 'USD',
+    period: data.period || 'monthly',
+    nextDate: data.nextDate || '',
+    note: (data.note || '').trim(),
+  };
+}
+
+function monthlyPreviewText(fee, currency, period) {
+  const base = S.subs.baseCurrency || 'USD';
+  if (isNaN(fee) || fee <= 0) return '≈ — / month';
+  const months = PERIOD_MONTHS[period] || 1;
+  const monthlyUsd = toUSD(fee, currency) / months;
+  const display = fromUSD(monthlyUsd, base);
+  return `≈ <strong>${fmtMoney(display, base)}</strong> / month`;
+}
 
 function toUSD(amount, currency) {
   return (+amount || 0) * (FX_TO_USD[currency] || 1);
@@ -2878,51 +2933,171 @@ function renderSubscriptions() {
     root.appendChild(h('div', { class: 'subs-empty' }, 'No subscriptions match this filter.'));
   } else {
     visible.forEach(s => {
-      const days = daysUntil(s.nextDate);
-      const cls = ['subs-row'];
-      if (days != null && days < 0) cls.push('overdue');
-      else if (days != null && days <= 7) cls.push('expiring');
-
-      const monthlyDisplay = fromUSD(monthlyCostUSD(s), base);
-      const periodLabel = (s.period || 'monthly').replace('semiannual', 'semi-annual');
-
-      let nextLabel = '—', nextSub = '';
-      if (s.nextDate) {
-        nextLabel = s.nextDate;
-        if (days != null) {
-          if (days < 0) nextSub = `${Math.abs(days)} d overdue`;
-          else if (days === 0) nextSub = 'today';
-          else if (days === 1) nextSub = 'tomorrow';
-          else nextSub = `in ${days} d`;
-        }
-      }
-
-      root.appendChild(h('div', { class: cls.join(' ') },
-        h('div', { class: 'subs-name' },
-          h('strong', {}, s.name),
-          s.note ? h('small', {}, s.note) : h('small', {}, ' ')
-        ),
-        h('span', { class: `sub-nature ${s.nature}` }, NATURE_LABEL[s.nature] || s.nature),
-        h('span', { class: 'subs-fee' },
-          fmtMoney(+s.fee, s.currency),
-          h('small', {}, s.currency)
-        ),
-        h('span', { class: 'subs-period' }, periodLabel),
-        h('span', { class: 'subs-monthly' }, fmtMoney(monthlyDisplay, base)),
-        h('span', { class: 'subs-next' },
-          nextLabel,
-          nextSub ? h('small', {}, nextSub) : null
-        ),
-        h('button', {
-          class: 'subs-del',
-          title: 'Remove this subscription',
-          onClick: (e) => { e.stopPropagation(); deleteSubscription(s.id); }
-        }, '✕')
-      ));
+      root.appendChild(subEditingId === s.id ? renderSubscriptionEditor(s) : renderSubscriptionRow(s, base));
     });
   }
 
   renderSubsSummary();
+}
+
+function renderSubscriptionRow(s, base) {
+  const days = daysUntil(s.nextDate);
+  const cls = ['subs-row'];
+  if (days != null && days < 0) cls.push('overdue');
+  else if (days != null && days <= 7) cls.push('expiring');
+
+  const monthlyDisplay = fromUSD(monthlyCostUSD(s), base);
+  const periodLabel = (s.period || 'monthly').replace('semiannual', 'semi-annual');
+
+  let nextLabel = '—', nextSub = '';
+  if (s.nextDate) {
+    nextLabel = s.nextDate;
+    if (days != null) {
+      if (days < 0) nextSub = `${Math.abs(days)} d overdue`;
+      else if (days === 0) nextSub = 'today';
+      else if (days === 1) nextSub = 'tomorrow';
+      else nextSub = `in ${days} d`;
+    }
+  }
+
+  return h('div', { class: cls.join(' ') },
+    h('div', { class: 'subs-name' },
+      h('strong', {}, s.name),
+      s.note ? h('small', {}, s.note) : h('small', {}, ' ')
+    ),
+    h('span', { class: `sub-nature ${s.nature}` }, NATURE_LABEL[s.nature] || s.nature),
+    h('span', { class: 'subs-fee' },
+      fmtMoney(+s.fee, s.currency),
+      h('small', {}, s.currency)
+    ),
+    h('span', { class: 'subs-period' }, periodLabel),
+    h('span', { class: 'subs-monthly' }, fmtMoney(monthlyDisplay, base)),
+    h('span', { class: 'subs-next' },
+      nextLabel,
+      nextSub ? h('small', {}, nextSub) : null
+    ),
+    h('div', { class: 'subs-actions' },
+      h('button', {
+        type: 'button',
+        class: 'subs-edit',
+        title: 'Edit this subscription',
+        'aria-label': `Edit ${s.name}`,
+        onClick: (e) => { e.stopPropagation(); beginEditSubscription(s.id); }
+      }, '✎'),
+      h('button', {
+        type: 'button',
+        class: 'subs-del',
+        title: 'Remove this subscription',
+        'aria-label': `Remove ${s.name}`,
+        onClick: (e) => { e.stopPropagation(); deleteSubscription(s.id); }
+      }, '✕')
+    )
+  );
+}
+
+function renderSubscriptionEditor(s) {
+  const nameId = `subEditName-${s.id}`;
+  const natureId = `subEditNature-${s.id}`;
+  const feeId = `subEditFee-${s.id}`;
+  const currencyId = `subEditCurrency-${s.id}`;
+  const periodId = `subEditPeriod-${s.id}`;
+  const nextId = `subEditNext-${s.id}`;
+  const noteId = `subEditNote-${s.id}`;
+  const preview = h('span', { class: 'subs-preview', html: monthlyPreviewText(+s.fee, s.currency, s.period) });
+
+  const field = (label, forId, control, wide) =>
+    h('div', { class: wide ? 'field field-wide' : 'field' },
+      h('label', { for: forId }, label),
+      control
+    );
+
+  const refreshPreview = (form) => {
+    const fee = parseFloat(form.querySelector('[name="fee"]')?.value);
+    const currency = form.querySelector('[name="currency"]')?.value;
+    const period = form.querySelector('[name="period"]')?.value;
+    preview.innerHTML = monthlyPreviewText(fee, currency, period);
+  };
+
+  const commit = (form) => {
+    const fd = new FormData(form);
+    saveEditedSubscription(s.id, {
+      name: fd.get('name'),
+      nature: fd.get('nature'),
+      fee: fd.get('fee'),
+      currency: fd.get('currency'),
+      period: fd.get('period'),
+      nextDate: fd.get('nextDate'),
+      note: fd.get('note'),
+    });
+  };
+
+  const form = h('form', {
+    class: 'subs-edit-form',
+    autocomplete: 'off',
+    onSubmit: (e) => { e.preventDefault(); commit(e.target); },
+  },
+    h('div', { class: 'subs-form-grid' },
+      field('Service', nameId, h('input', {
+        id: nameId, name: 'name', type: 'text', required: 'true',
+        value: s.name || '', placeholder: 'e.g. Perplexity Pro, ChatGPT, TraderLion',
+      }), true),
+      field('Nature', natureId, subscriptionSelect('nature', natureId, NATURE_OPTIONS, s.nature || 'other', 'Nature')),
+      field('Fee', feeId, h('input', {
+        id: feeId, name: 'fee', type: 'number', step: '0.01', min: '0', required: 'true',
+        value: s.fee != null ? String(s.fee) : '', placeholder: '20.00',
+      })),
+      field('Currency', currencyId, subscriptionSelect('currency', currencyId, CURRENCY_OPTIONS, s.currency || 'USD', 'Currency')),
+      field('Period', periodId, subscriptionSelect('period', periodId, PERIOD_OPTIONS, s.period || 'monthly', 'Period')),
+      field('Next bill', nextId, h('input', {
+        id: nextId, name: 'nextDate', type: 'date', value: s.nextDate || '',
+      })),
+      field('Note (optional)', noteId, h('input', {
+        id: noteId, name: 'note', type: 'text', value: s.note || '',
+        placeholder: 'e.g. shared with team, annual = $200 saved',
+      }), true)
+    ),
+    h('div', { class: 'subs-form-foot' },
+      preview,
+      h('div', { class: 'subs-edit-actions' },
+        h('button', { type: 'submit', class: 'btn btn-primary' }, 'Save changes'),
+        h('button', {
+          type: 'button',
+          class: 'btn-ghost',
+          onClick: () => { subEditingId = null; renderSubscriptions(); }
+        }, 'Cancel')
+      )
+    )
+  );
+
+  ['fee', 'currency', 'period'].forEach(name => {
+    const el = form.querySelector(`[name="${name}"]`);
+    if (!el) return;
+    el.addEventListener('input', () => refreshPreview(form));
+    el.addEventListener('change', () => refreshPreview(form));
+  });
+
+  return h('div', { class: 'subs-row editing' }, form);
+}
+
+function beginEditSubscription(id) {
+  subEditingId = id;
+  renderSubscriptions();
+  const el = document.getElementById(`subEditName-${id}`);
+  if (el) {
+    el.focus();
+    el.select();
+  }
+}
+
+function saveEditedSubscription(id, data) {
+  const item = (S.subs.items || []).find(s => s.id === id);
+  if (!item) return;
+  const fields = subscriptionFields(data);
+  if (!fields) return;
+  Object.assign(item, fields);
+  subEditingId = null;
+  saveState();
+  renderSubscriptions();
 }
 
 function renderSubsSummary() {
@@ -2940,42 +3115,31 @@ function renderSubsSummary() {
 }
 
 function addSubscription(data) {
-  if (!data.name || !data.fee) return;
-  const item = {
+  const fields = subscriptionFields(data);
+  if (!fields) return;
+  S.subs.items.push({
     id: uid(),
-    name: data.name.trim(),
-    nature: data.nature || 'other',
-    fee: parseFloat(data.fee) || 0,
-    currency: data.currency || 'USD',
-    period: data.period || 'monthly',
-    nextDate: data.nextDate || '',
-    note: (data.note || '').trim(),
+    ...fields,
     createdAt: Date.now(),
-  };
-  S.subs.items.push(item);
+  });
   saveState();
   renderSubscriptions();
 }
 
 function deleteSubscription(id) {
+  if (subEditingId === id) subEditingId = null;
   S.subs.items = (S.subs.items || []).filter(s => s.id !== id);
   saveState();
   renderSubscriptions();
 }
 
 function updateSubPreview() {
-  const fee = parseFloat($('#subFee').value);
-  const currency = $('#subCurrency').value;
-  const period = $('#subPeriod').value;
-  const base = S.subs.baseCurrency || 'USD';
-  if (isNaN(fee) || fee <= 0) {
-    $('#subPreview').textContent = '≈ — / month';
-    return;
-  }
-  const months = PERIOD_MONTHS[period] || 1;
-  const monthlyUsd = toUSD(fee, currency) / months;
-  const display = fromUSD(monthlyUsd, base);
-  $('#subPreview').innerHTML = `≈ <strong>${fmtMoney(display, base)}</strong> / month`;
+  const preview = $('#subPreview');
+  if (!preview) return;
+  const fee = parseFloat($('#subFee')?.value);
+  const currency = $('#subCurrency')?.value;
+  const period = $('#subPeriod')?.value;
+  preview.innerHTML = monthlyPreviewText(fee, currency, period);
 }
 
 function wireSubscriptions() {

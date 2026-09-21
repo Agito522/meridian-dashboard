@@ -2264,9 +2264,12 @@ input:focus, select:focus, textarea:focus {
   gap: 14px;
   margin-bottom: 14px;
 }
-.subs-form .field { display: flex; flex-direction: column; gap: 4px; }
-.subs-form .field-wide { grid-column: span 2; }
-.subs-form label {
+.subs-form .field,
+.subs-edit-form .field { display: flex; flex-direction: column; gap: 4px; }
+.subs-form .field-wide,
+.subs-edit-form .field-wide { grid-column: span 2; }
+.subs-form label,
+.subs-edit-form label {
   font-family: var(--font-mono, "JetBrains Mono", monospace);
   font-size: 9px;
   letter-spacing: 0.14em;
@@ -2274,7 +2277,9 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-muted);
 }
 .subs-form input,
-.subs-form select {
+.subs-form select,
+.subs-edit-form input,
+.subs-edit-form select {
   padding: 8px 10px;
   background: var(--surface-1);
   border: 1px solid var(--border);
@@ -2284,7 +2289,9 @@ input:focus, select:focus, textarea:focus {
   font-family: var(--font-body);
 }
 .subs-form input:focus,
-.subs-form select:focus {
+.subs-form select:focus,
+.subs-edit-form input:focus,
+.subs-edit-form select:focus {
   outline: none;
   border-color: var(--primary);
 }
@@ -2330,13 +2337,20 @@ input:focus, select:focus, textarea:focus {
 }
 .subs-row, .subs-table-head {
   display: grid;
-  grid-template-columns: 1.6fr 110px 130px 100px 130px 130px 30px;
+  grid-template-columns: 1.6fr 110px 130px 100px 130px 130px 56px;
   gap: var(--space-3, 12px);
   padding: 10px 14px;
   align-items: center;
   font-size: 13px;
   border-bottom: 1px solid var(--divider);
 }
+.subs-row.editing {
+  display: block;
+  background: var(--surface-2, rgba(0,0,0,0.03));
+}
+.subs-row.editing:hover { background: var(--surface-2, rgba(0,0,0,0.03)); }
+.subs-edit-form { margin: 0; }
+.subs-edit-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .subs-table-head {
   background: var(--surface-2, rgba(0,0,0,0.03));
   font-family: var(--font-mono, "JetBrains Mono", monospace);
@@ -2428,7 +2442,13 @@ input:focus, select:focus, textarea:focus {
   margin-top: 2px;
   letter-spacing: 0.04em;
 }
-.subs-del {
+.subs-actions {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+  align-items: center;
+}
+.subs-edit, .subs-del {
   width: 26px; height: 26px;
   background: transparent;
   border: 1px solid transparent;
@@ -2438,6 +2458,7 @@ input:focus, select:focus, textarea:focus {
   font-size: 14px;
   line-height: 1;
 }
+.subs-edit:hover { color: var(--primary); border-color: var(--primary); }
 .subs-del:hover { color: var(--danger); border-color: var(--danger); }
 
 .subs-empty {
@@ -2451,18 +2472,19 @@ input:focus, select:focus, textarea:focus {
 @media (max-width: 1100px) {
   .subs-form-grid { grid-template-columns: repeat(4, 1fr); }
   .subs-row, .subs-table-head {
-    grid-template-columns: 1.4fr 100px 110px 100px 110px 30px;
+    grid-template-columns: 1.4fr 100px 110px 100px 110px 56px;
   }
   .subs-row > .subs-monthly:nth-child(5),
   .subs-table-head > span:nth-child(5) { display: none; }
 }
 @media (max-width: 720px) {
   .subs-form-grid { grid-template-columns: repeat(2, 1fr); }
-  .subs-form .field-wide { grid-column: span 2; }
+  .subs-form .field-wide,
+  .subs-edit-form .field-wide { grid-column: span 2; }
   .subs-row, .subs-table-head {
-    grid-template-columns: 1fr 80px 90px 30px;
+    grid-template-columns: 1fr 80px 90px 56px;
   }
-  .subs-row > *:nth-child(n+5):not(.subs-del),
+  .subs-row > *:nth-child(n+5):not(.subs-actions),
   .subs-table-head > span:nth-child(n+5):not(:last-child) { display: none; }
 }
 
