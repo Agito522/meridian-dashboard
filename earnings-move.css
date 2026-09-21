@@ -530,7 +530,18 @@ a:hover { color: var(--primary-hover); }
   font-size: var(--text-sm);
   color: var(--text-muted);
 }
-.em-docs-link span { color: var(--text-faint); }
+.em-docs-link {
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--primary) 35%, var(--border));
+  border-radius: var(--r-md);
+  padding: 0.7rem 0.85rem;
+}
+.em-docs-link a {
+  color: var(--primary);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+.em-docs-link a:hover { color: var(--primary-hover); }
 .em-nvda-note {
   background: var(--surface-2);
   border: 1px dashed var(--border);
