@@ -14,6 +14,7 @@ A personal life management dashboard built around split-focus peak windows (7–
 - **Daily journal** — wins, lessons, tomorrow's first move (auto-saved per date)
 - **Trade log** — symbol, side, P/L, note → auto-calculates W/L, hit rate, running P/L
 - **J.Law Daily Trading Routine** — Pre-open → Session → After-close → MRA checklist, per-day notes, streak, and the 18 Winner Rules (quick-ref). Persists in `localStorage` under `meridian.jlawRoutine.v1` (wipe-routine does not touch the main `meridian_v1` store). Use the **Routine** quick-action to jump there.
+- **Earnings ATM straddle calculator** — standalone Traditional Chinese page (`earnings-move.html`) for C泰龍’s 1-minute implied-move method: `(C+P)/S` range plus a 2% call/put hedge-value bias. Prefills the NVDA worked example. Linked discreetly from the dashboard footer.
 - **Dark / light themes** — toggle in the top-right (pairs with each skin)
 - **Auto-save** — uses browser localStorage, plus JSON export/import for backup or cross-device transfer
 
@@ -52,11 +53,16 @@ The dashboard auto-saves to your browser's localStorage. To back up or move to a
 
 ```
 meridian-dashboard/
-├── index.html          # Markup
-├── style.css           # Design system + components + skins
-├── app.js              # State, rendering, interactivity
-├── assets/banners/     # Skin hero strips (webp)
-└── README.md           # This file
+├── index.html                 # Markup
+├── style.css                  # Design system + components + skins
+├── app.js                     # State, rendering, interactivity
+├── earnings-move.html         # Standalone earnings ATM straddle calculator
+├── earnings-move.css
+├── earnings-move.js
+├── earnings-move-calc.js      # Pure calc (also runnable from Node)
+├── earnings-move-calc.test.js
+├── assets/banners/            # Skin hero strips (webp)
+└── README.md                  # This file
 ```
 
 ## Customizing your schedule
